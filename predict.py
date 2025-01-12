@@ -31,74 +31,75 @@ cap.set(cv2.CAP_PROP_FPS, 35)
 # ----------------------------------------------------------------------------------------
 # 4) 그래프, 바운스 관련 전역 변수 정의
 # ----------------------------------------------------------------------------------------
-x_values = []
-y_values = []
-orange_pixel_values = []
-frame_count = 0
-MAX_POINTS = 100
+x_values = []                    # 공의 x좌표 기록을 저장하는 리스트 (예: [100, 105, 110, ...])
+y_values = []                    # 공의 y좌표 기록을 저장하는 리스트 (예: [200, 195, 190, ...]) 
+orange_pixel_values = []         # 프레임별 오렌지색 픽셀 수를 저장하는 리스트 (예: [150, 148, 152, ...])
+frame_count = 0                  # 현재까지 처리된 프레임 수를 카운트 (예: 1, 2, 3, ...)
+MAX_POINTS = 100                 # 그래프에 표시할 최대 데이터 포인트 수 (예: 최근 100개 프레임만 표시)
 
-bounce_count = 0
+bounce_count = 0                 # 공이 바운스한 총 횟수 (예: 0에서 시작해서 바운스할 때마다 1씩 증가)
 
-consecutiveDownCount = 0
-consecutiveUpCount = 0
-state = None
-DOWN_THRESHOLD = 2
-UP_THRESHOLD = 1
-PIXEL_THRESHOLD = 3.0
-last_y = None
+consecutiveDownCount = 0         # 연속으로 아래로 움직인 프레임 수 (예: 3프레임 연속 하강 시 3)
+consecutiveUpCount = 0           # 연속으로 위로 움직인 프레임 수 (예: 2프레임 연속 상승 시 2)
+state = None                     # 현재 공의 이동 상태 ('up' 또는 'down' 또는 None)
+DOWN_THRESHOLD = 2               # 바운스 감지를 위한 최소 하강 프레임 수 (예: 2프레임 이상 연속 하강)
+UP_THRESHOLD = 1                 # 바운스 감지를 위한 최소 상승 프레임 수 (예: 1프레임 이상 연속 상승)
+PIXEL_THRESHOLD = 3.0           # 움직임 감지를 위한 최소 픽셀 변화량 (예: y좌표가 3픽셀 이상 변할 때)
+last_y = None                    # 이전 프레임의 y좌표 값 (예: 200)
 
-bounce_points = []
-bounce_times = []
+bounce_points = []              # 바운스가 발생한 지점의 좌표 리스트 (예: [(100,200), (150,200), ...])
+bounce_times = []               # 각 바운스가 발생한 시간 리스트 (예: [1.23, 2.45, 3.67, ...])
 
-CONTINUOUS_TIMEOUT = 1.0
-last_bounce_time = None
+CONTINUOUS_TIMEOUT = 1.0        # 연속된 바운스 간의 최소 시간 간격(초) (바운스가 너무 멀어지면 떨어진걸로 인식)
+last_bounce_time = None         # 마지막 바운스가 감지된 시간 (예: 1234567.89)
 
-sound_enabled = False
-ignore_zero_orange = False
+sound_enabled = False           # 바운스 시 소리 재생 여부 (True: 소리 켬, False: 소리 끔)
+ignore_zero_orange = False      # 오렌지색 픽셀이 0일 때 무시할지 여부 (True: 무시, False: 처리)
 
-button_rect = [500, 20, 120, 40]
-button_rect_ignore = [500, 70, 120, 40]
+button_rect = [500, 20, 120, 40]         # 소리 켜기/끄기 버튼의 위치와 크기 [x, y, width, height]
+button_rect_ignore = [500, 70, 120, 40]  # 오렌지픽셀 무시 설정 버튼의 위치와 크기 [x, y, width, height]
 
-FONT_PATH = r"C:\Users\omyra\Desktop\coding\ping_pong\Digital Display.ttf"
-FONT_SIZE = 400
-font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
+FONT_PATH = r"C:\Users\omyra\Desktop\coding\ping_pong\Digital Display.ttf"  # 디지털 폰트 파일 경로
+FONT_SIZE = 400                 # 폰트 크기 (픽셀 단위)
+font = ImageFont.truetype(FONT_PATH, FONT_SIZE)  # PIL 폰트 객체 생성 (바운스 카운트 표시용)
 
+# BGR 형식의 색상 시퀀스
 color_sequence = [
-    (255, 255, 255),
-    (0, 0, 255),
-    (0, 165, 255),
-    (0, 255, 255),
-    (144, 238, 144),
-    (0, 255, 0),
-    (255, 255, 0),
-    (255, 0, 0),
-    (128, 0, 255),
-    (255, 0, 255)
+    (255, 255, 255),  # 흰색
+    (0, 0, 255),      # 빨간색 
+    (0, 165, 255),    # 주황색
+    (0, 255, 255),    # 노란색
+    (144, 238, 144),  # 연한 초록색
+    (0, 255, 0),      # 초록색
+    (255, 255, 0),    # 하늘색
+    (255, 0, 0),      # 파란색
+    (128, 0, 255),    # 분홍색
+    (255, 0, 255)     # 보라색
 ]
-intensity_levels = [0.5 + 0.05 * i for i in range(10)]
+intensity_levels = [0.5 + 0.05 * i for i in range(10)]  # 각 색상의 밝기 레벨 (예: [0.5, 0.55, 0.6, ..., 0.95])
 
 def get_color(count):
-    if count >= 1000:
+    if count >= 1000:  # 바운스 카운트가 1000 이상이면 보라색 반환 (예: count=1234 -> (255,0,255))
         return (255, 0, 255)
 
-    color_index = count // 100
-    if color_index >= len(color_sequence):
-        color_index = len(color_sequence) - 1
+    color_index = count // 100  # 100단위로 기본 색상 결정 (예: count=234 -> index=2)
+    if color_index >= len(color_sequence):  # 색상 시퀀스 범위 초과 시 마지막 색상 사용
+        color_index = len(color_sequence) - 1  # (예: color_index=11 -> 9로 조정)
 
-    step_in_block = (count % 100) // 10
-    intensity = intensity_levels[step_in_block] if step_in_block < len(intensity_levels) else 1.0
-    base_color = color_sequence[color_index]
+    step_in_block = (count % 100) // 10  # 각 색상 내에서 10단위로 "밝기 단계" 결정 (예: count=234 -> step=3 밝기 단계 step 0...9)
+    intensity = intensity_levels[step_in_block] if step_in_block < len(intensity_levels) else 1.0  # 밝기 레벨 선택 (예: step=3 -> 0.65)
+    base_color = color_sequence[color_index]  # 기본 색상 선택 (예: (0,255,0))
 
-    color_bgr = np.uint8([[base_color]])
-    color_hsv = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2HSV)[0][0]
+    color_bgr = np.uint8([[base_color]])  # BGR 색상을 numpy 배열로 변환 (예: [[[0,255,0]]])
+    color_hsv = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2HSV)[0][0]  # BGR을 HSV로 변환 (예: [60,255,255])
 
-    color_hsv = color_hsv.astype(float)
-    color_hsv[2] = min(color_hsv[2] * intensity, 255)
-    color_hsv = color_hsv.astype(np.uint8)
+    color_hsv = color_hsv.astype(float)  # HSV 값을 실수형으로 변환하여 연산 가능하게 함
+    color_hsv[2] = min(color_hsv[2] * intensity, 255)  # Value(밝기) 값 조정 (예: 255 * 0.65 = 165.75)
+    color_hsv = color_hsv.astype(np.uint8)  # 다시 정수형으로 변환
 
-    intense_color = cv2.cvtColor(np.uint8([[color_hsv]]), cv2.COLOR_HSV2BGR)[0][0]
-    intense_color_rgb = (intense_color[2], intense_color[1], intense_color[0])
-    return intense_color_rgb
+    intense_color = cv2.cvtColor(np.uint8([[color_hsv]]), cv2.COLOR_HSV2BGR)[0][0]  # HSV를 BGR로 다시 변환
+    intense_color_rgb = (intense_color[2], intense_color[1], intense_color[0])  # BGR을 RGB로 변환 (예: (0,165,0))
+    return intense_color_rgb  # 최종 RGB 색상 반환
 
 # =============================================================================
 # 드래그/리사이즈 가능한 빨간 사각형 관련 전역 변수
