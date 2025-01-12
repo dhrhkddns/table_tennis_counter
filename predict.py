@@ -1,33 +1,32 @@
-# 필요한 라이브러리 임포트
-import cv2  # OpenCV 라이브러리 - 이미지/비디오 처리용 (예: frame = cv2.imread("image.jpg"))
-import numpy as np  # 수치 연산 라이브러리 - 배열 처리용 (예: arr = np.zeros((10,10)))
-import time  # 시간 측정용 라이브러리 (예: start_time = time.time())
-from ultralytics import YOLO  # YOLO 객체 탐지 모델 (예: model = YOLO("yolov8n.pt"))
-import pygame  # 오디오 재생용 라이브러리 (예: pygame.mixer.Sound("beep.wav").play())
-from PIL import Image, ImageDraw, ImageFont  # 이미지 처리/텍스트 렌더링용 (예: img = Image.new("RGB", (100,100)))
-import ctypes  # Windows API 접근용 (예: user32.ShowCursor(False))
-user32 = ctypes.windll.user32  # Windows 사용자 인터페이스 제어용
+import cv2
+import numpy as np
+import time
+import ctypes
+from ultralytics import YOLO
+import pygame
+from PIL import Image, ImageDraw, ImageFont
+
+user32 = ctypes.windll.user32
 
 # ----------------------------------------------------------------------------------------
 # 1) pygame 오디오 초기화 및 사운드 로드
 # ----------------------------------------------------------------------------------------
-pygame.mixer.init()  # pygame 오디오 시스템 초기화 (예: 44100Hz, 16bit, stereo)
-sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\retro-coin-4-236671.mp3")  # 효과음 파일 로드
+pygame.mixer.init()
+sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\retro-coin-4-236671.mp3")
 
 # ----------------------------------------------------------------------------------------
 # 2) YOLO 모델 로드
 # ----------------------------------------------------------------------------------------
-model = YOLO(r"C:\Users\omyra\Desktop\coding\ping_pong\Ping-Pong-Detection-3\Results\weights\best.pt")  # 학습된 YOLO 모델 로드
-model.to("cuda")  # GPU 메모리로 모델 이동 (예: NVIDIA RTX 3080에서 실행)
+model = YOLO(r"C:\Users\omyra\Desktop\coding\ping_pong\Ping-Pong-Detection-3\Results\weights\best.pt")
+model.to("cuda")
 
 # ----------------------------------------------------------------------------------------
 # 3) 카메라 디바이스 연결
 # ----------------------------------------------------------------------------------------
-cap = cv2.VideoCapture(1)  # 카메라 연결 (예: 외장 웹캠은 보통 1번 인덱스)
-# 카메라 해상도 설정
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # 가로 해상도 설정 (예: 640픽셀)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  # 세로 해상도 설정 (예: 480픽셀)
-cap.set(cv2.CAP_PROP_FPS, 35)  # FPS 설정 (예: 초당 30프레임)
+cap = cv2.VideoCapture(1)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FPS, 35)
 
 # ----------------------------------------------------------------------------------------
 # 4) 그래프, 바운스 관련 전역 변수 정의
@@ -101,12 +100,40 @@ def get_color(count):
     intense_color_rgb = (intense_color[2], intense_color[1], intense_color[0])
     return intense_color_rgb
 
+# =============================================================================
+# 드래그/리사이즈 가능한 빨간 사각형 관련 전역 변수
+# =============================================================================
+drag_rect_x, drag_rect_y = 100, 100  # 사각형 왼상단 초기 위치
+drag_rect_w, drag_rect_h = 150, 150  # 사각형 폭, 높이
+dragging = False                     # 현재 드래그(이동) 중인지 여부
+resizing_corner = None               # 현재 리사이즈 중인 corner (None, 'tl', 'tr', 'bl', 'br')
+drag_offset_x, drag_offset_y = 0, 0  # (이동용) 드래그 시작점 대비 사각형 내부 오프셋
+corner_size = 10                     # 각 모서리 핸들의 반지름(또는 반폭)
+
+# =============================================================================
+# 사각형 내부에서 공이 감지된 시간을 실시간으로 표시하기 위한 변수
+# =============================================================================
+ball_in_rect_start = None   # 사각형 안에 공이 들어온 시점(초)
+in_rect_time = 0.0          # 사각형 안에 있는 동안의 시간(실시간 업데이트)
+
+# ----------------------------------------------------------------------------------------
+# (A) 우클릭 확대/복귀 기능 관련 전역 변수
+# ----------------------------------------------------------------------------------------
+enlarged_view = None  # 'tl', 'tr', 'bl', 'br' or None (기본값: None=4분할)
+
 # ----------------------------------------------------------------------------------------
 # 9) mouse_callback 함수
 # ----------------------------------------------------------------------------------------
+last_mouse_move_time = time.time()
+mouse_visible = True
+
 def mouse_callback(event, x, y, flags, param):
     global sound_enabled, ignore_zero_orange
     global last_mouse_move_time, mouse_visible
+    global dragging, drag_offset_x, drag_offset_y
+    global drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h
+    global resizing_corner
+    global enlarged_view  # (A) 우클릭 확대/복귀
 
     if event == cv2.EVENT_MOUSEMOVE:
         last_mouse_move_time = time.time()
@@ -114,16 +141,158 @@ def mouse_callback(event, x, y, flags, param):
             user32.ShowCursor(True)
             mouse_visible = True
 
-    if event == cv2.EVENT_LBUTTONDOWN:
+        # 리사이즈 중이면 각 코너별로 크기 갱신
+        if resizing_corner is not None:
+            if resizing_corner == 'tl':
+                new_w = drag_rect_w + (drag_rect_x - x)
+                new_h = drag_rect_h + (drag_rect_y - y)
+                new_x = x
+                new_y = y
+                if new_w < 10:
+                    new_w = 10
+                    new_x = drag_rect_x + drag_rect_w - 10
+                if new_h < 10:
+                    new_h = 10
+                    new_y = drag_rect_y + drag_rect_h - 10
+                new_x = max(0, min(new_x, drag_rect_x + drag_rect_w))
+                new_y = max(0, min(new_y, drag_rect_y + drag_rect_h))
+
+                if new_x < 0: new_x = 0
+                if new_y < 0: new_y = 0
+                if new_x > 640: new_x = 640
+                if new_y > 480: new_y = 480
+
+                drag_rect_w = new_w
+                drag_rect_h = new_h
+                drag_rect_x = new_x
+                drag_rect_y = new_y
+
+            elif resizing_corner == 'tr':
+                new_w = x - drag_rect_x
+                new_h = drag_rect_h + (drag_rect_y - y)
+                new_y = y
+                if new_w < 10:
+                    new_w = 10
+                if new_h < 10:
+                    new_h = 10
+                    new_y = drag_rect_y + drag_rect_h - 10
+                if new_w > 640 - drag_rect_x:
+                    new_w = 640 - drag_rect_x
+                if new_y < 0:
+                    new_y = 0
+
+                drag_rect_w = new_w
+                drag_rect_h = new_h
+                drag_rect_y = new_y
+
+            elif resizing_corner == 'bl':
+                new_w = drag_rect_w + (drag_rect_x - x)
+                new_h = y - drag_rect_y
+                new_x = x
+                if new_w < 10:
+                    new_w = 10
+                    new_x = drag_rect_x + drag_rect_w - 10
+                if new_h < 10:
+                    new_h = 10
+                if new_x < 0:
+                    new_x = 0
+                if new_h > 480 - drag_rect_y:
+                    new_h = 480 - drag_rect_y
+
+                drag_rect_w = new_w
+                drag_rect_h = new_h
+                drag_rect_x = new_x
+
+            elif resizing_corner == 'br':
+                new_w = x - drag_rect_x
+                new_h = y - drag_rect_y
+                if new_w < 10:
+                    new_w = 10
+                if new_h < 10:
+                    new_h = 10
+                if new_w > 640 - drag_rect_x:
+                    new_w = 640 - drag_rect_x
+                if new_h > 480 - drag_rect_y:
+                    new_h = 480 - drag_rect_y
+
+                drag_rect_w = new_w
+                drag_rect_h = new_h
+
+        elif dragging:
+            new_x = x - drag_offset_x
+            new_y = y - drag_offset_y
+            new_x = max(0, min(new_x, 640 - drag_rect_w))
+            new_y = max(0, min(new_y, 480 - drag_rect_h))
+            drag_rect_x, drag_rect_y = new_x, new_y
+
+    elif event == cv2.EVENT_LBUTTONDOWN:
+        # 사운드 ON/OFF 버튼
         if (button_rect[0] <= x - 640 <= button_rect[0] + button_rect[2] and
             button_rect[1] <= y <= button_rect[1] + button_rect[3]):
             sound_enabled = not sound_enabled
             print(f"Sound Enabled: {sound_enabled}")
         
+        # Ignore Zero Orange 버튼
         elif (button_rect_ignore[0] <= x - 640 <= button_rect_ignore[0] + button_rect_ignore[2] and
               button_rect_ignore[1] <= y <= button_rect_ignore[1] + button_rect_ignore[3]):
             ignore_zero_orange = not ignore_zero_orange
             print(f"Ignore Zero Orange Pixels: {ignore_zero_orange}")
+        
+        else:
+            corners = {
+                'tl': (drag_rect_x, drag_rect_y),
+                'tr': (drag_rect_x + drag_rect_w, drag_rect_y),
+                'bl': (drag_rect_x, drag_rect_y + drag_rect_h),
+                'br': (drag_rect_x + drag_rect_w, drag_rect_y + drag_rect_h)
+            }
+            corner_clicked = None
+            for ckey, cpos in corners.items():
+                cx, cy = cpos
+                if (cx - corner_size <= x <= cx + corner_size and 
+                    cy - corner_size <= y <= cy + corner_size):
+                    corner_clicked = ckey
+                    break
+
+            if corner_clicked:
+                resizing_corner = corner_clicked
+            else:
+                # 사각형 내부라면 드래그(이동) 시작
+                if (drag_rect_x <= x < drag_rect_x + drag_rect_w and
+                    drag_rect_y <= y < drag_rect_y + drag_rect_h):
+                    dragging = True
+                    drag_offset_x = x - drag_rect_x
+                    drag_offset_y = y - drag_rect_y
+
+    elif event == cv2.EVENT_LBUTTONUP:
+        dragging = False
+        resizing_corner = None
+
+    # (A) 우클릭 시 해당 쿼드런트만 확대 or 복귀
+    elif event == cv2.EVENT_RBUTTONDOWN:
+        if enlarged_view is None:
+            # 4개 쿼드런트 범위:
+            # top-left:    y in [0,480), x in [0,640)
+            # top-right:   y in [0,480), x in [640,1280)
+            # bottom-left: y in [480,960), x in [0,640)
+            # bottom-right:y in [480,960), x in [640,1280)
+
+            if 0 <= y < 480 and 0 <= x < 640:
+                enlarged_view = 'tl'
+            elif 0 <= y < 480 and 640 <= x < 1280:
+                enlarged_view = 'tr'
+            elif 480 <= y < 960 and 0 <= x < 640:
+                enlarged_view = 'bl'
+            elif 480 <= y < 960 and 640 <= x < 1280:
+                enlarged_view = 'br'
+
+            if enlarged_view is not None:
+                print(f"Enlarged => {enlarged_view}")
+
+        else:
+            # 이미 확대된 상태라면 다시 None으로 (4분할)
+            print(f"Return to 4-split from: {enlarged_view}")
+            enlarged_view = None
+
 
 # ----------------------------------------------------------------------------------------
 # 10) render_text_with_ttf()
@@ -193,6 +362,7 @@ def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=No
         by = int(by_ori / max_y * (height - 1))
         cv2.circle(graph_img, (bx, by), 5, (0, 0, 255), -1)
 
+    # 사운드 ON/OFF 버튼
     cv2.rectangle(
         graph_img,
         (button_rect[0], button_rect[1]),
@@ -211,6 +381,7 @@ def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=No
         2
     )
 
+    # Ignore0 버튼
     cv2.rectangle(
         graph_img,
         (button_rect_ignore[0], button_rect_ignore[1]),
@@ -310,26 +481,23 @@ prev_bounce_count = None
 bounce_img = None
 is_fullscreen = False
 
-last_mouse_move_time = time.time()
-mouse_visible = True
-
 # ----------------------------------------------------------------------------------------
 # 14) 추가된 전역 변수: 상태 관리
 # ----------------------------------------------------------------------------------------
-current_state = "waiting"                                # 현재 상태 (예: "waiting", "moving", "bouncing" 등)
-state_display_text = "Waiting"                          # 화면에 표시될 상태 텍스트 (예: "Waiting", "Ball Moving" 등)
-state_font = cv2.FONT_HERSHEY_SIMPLEX                  # 상태 텍스트에 사용될 폰트 종류
-state_font_scale = 1.0                                 # 상태 텍스트의 크기 (1.0 = 기본 크기)
-state_font_color = (255, 255, 255)                     # 상태 텍스트의 색상 (흰색 = (255, 255, 255))
-state_font_thickness = 2                               # 상태 텍스트의 두께 (2 픽셀)
-state_change_time = None                               # 상태가 마지막으로 변경된 시간 (예: 1234567890.123)
+current_state = "waiting"
+state_display_text = "Waiting"
+state_font = cv2.FONT_HERSHEY_SIMPLEX
+state_font_scale = 1.0
+state_font_color = (255, 255, 255)
+state_font_thickness = 2
+state_change_time = None
 
-stationary_start_time = None                           # 공이 정지 상태로 진입한 시작 시간 (예: 1234567890.123)
-stationary_threshold = 2.0                             # 공이 정지했다고 판단하는 시간 기준값 (2.0초)
-movement_threshold = 5                                 # 공의 움직임을 감지하는 픽셀 단위 임계값 (5픽셀)
-last_position = None                                   # 이전 프레임에서의 공의 위치 (예: (100, 200))
+stationary_start_time = None
+stationary_threshold = 2.0
+movement_threshold = 5
+last_position = None
 
-previous_bounce_time = None                            # 이전 바운스가 발생한 시간 (예: 1234567890.123)
+previous_bounce_time = None
 
 # ----------------------------------------------------------------------------------------
 # 14-1) 추가: 마지막 검출 시각(공이 마지막으로 발견된 시간)을 저장할 변수
@@ -337,14 +505,18 @@ previous_bounce_time = None                            # 이전 바운스가 발
 last_detection_time = None
 
 # ========================================================================================
-# ## (추가된 부분) 바운스 간 시간차를 표시하기 위한 전역 변수
+# 바운스 간 시간차 표시를 위한 전역 변수
 # ========================================================================================
-bounce_time_diff = None  # 가장 최근 두 바운스 사이의 시간차를 저장할 변수
+bounce_time_diff = None
+
+# ========================================================================================
+# (추가) 최근 TRACKING 종료 시점의 bounce_count를 시각화하기 위한 이력
+# ========================================================================================
+bounce_history = []   # 최대 8개 정도만 저장해서 사각형에 표시
 
 # ----------------------------------------------------------------------------------------
-# 15) 메인 루프 (여기서 FPS 계산 & 원하는 FPS 맞추기)
+# 15) 메인 루프
 # ----------------------------------------------------------------------------------------
-
 prev_time = time.time()
 fps = 0.0
 
@@ -375,9 +547,13 @@ while True:
     detected = False
     orange_pixels = 0
 
+    # ------------------------------------------------------------------------------------
+    # 공 검출 여부 확인
+    # ------------------------------------------------------------------------------------
     if len(boxes) > 0:
         x1, y1, x2, y2 = boxes[0].xyxy[0].cpu().numpy()
         y_center = (y1 + y2) / 2.0
+        x_center = (x1 + x2) / 2.0  # 공의 x중심좌표
 
         x1i, y1i, x2i, y2i = map(int, [x1, y1, x2, y2])
         x1i = max(0, x1i)
@@ -404,11 +580,13 @@ while True:
             y_values.append(y_center)
             orange_pixel_values.append(orange_pixels)
 
+            # --------------------------------------------------------------------------
+            # 상태 전환(ready / tracking) 확인
+            # --------------------------------------------------------------------------
             if last_position is not None:
                 dy = y_center - last_position
                 movement = abs(dy)
             else:
-                dy = 0
                 movement = 0
 
             if current_state == "ready":
@@ -426,14 +604,19 @@ while True:
             else:
                 if stationary_start_time is None:
                     stationary_start_time = time.time()
-                elif (time.time() - stationary_start_time) >= stationary_threshold:  # 예: 공이 2초 이상 정지해있는지 확인 (stationary_threshold가 2초일 경우)
-                    if current_state != "ready":
+                elif (time.time() - stationary_start_time) >= stationary_threshold:
+                    # 공이 2초 이상 멈췄을 때
+                    if in_rect_time >= 2.0 and current_state != "ready":
+                        # 빨간 사각형 안에 공이 2초 이상 => ready
                         current_state = "ready"
                         state_change_time = time.time()
                         print("State changed to READY")
 
             last_position = y_center
 
+            # --------------------------------------------------------------------------
+            # 바운스 카운트 로직
+            # --------------------------------------------------------------------------
             if current_state == "tracking":
                 if last_y is not None:
                     dy_tracking = y_center - last_y
@@ -462,14 +645,16 @@ while True:
                                 if previous_bounce_time is not None:
                                     td = current_bounce_time - previous_bounce_time
                                     print(f"Time diff between last two bounces: {td:.2f} s")
-                                    # =================================================================================
-                                    # ## (추가된 부분) 바운스 간 시간차를 bounce_time_diff에 저장
-                                    # =================================================================================
                                     bounce_time_diff = td
-                                    # ---------------------------------------------------------------------------------
-
+                                    # (추가) 만약 td > 1.0 이면 상태를 waiting으로 돌리고 싶다면 여기서 처리
                                     if td > 1.0:
+                                        # waiting으로 전환하기 전에 bounce_history에 기록
+                                        bounce_history.append(bounce_count)
+                                        if len(bounce_history) > 8:
+                                            bounce_history.pop(0)
+
                                         current_state = "waiting"
+                                        # bounce_count도 0으로 리셋
                                         bounce_count = 0
                                         bounce_points = []
                                         bounce_times = []
@@ -488,6 +673,9 @@ while True:
 
                 last_y = y_center
 
+            # --------------------------------------------------------------------------
+            # 디버그용 사각형 & 텍스트
+            # --------------------------------------------------------------------------
             cv2.rectangle(frame, (x1i, y1i), (x2i, y2i), (0, 255, 0), 2)
             cv2.putText(
                 frame,
@@ -516,8 +704,41 @@ while True:
         y_values.append(None)
         orange_pixel_values.append(None)
 
+    # -------------------------------------------------------------------------
+    # (1) 공이 사각형 안에 있는 동안 => in_rect_time = 현재시간 - 진입시점
+    # (2) 공이 나가면 => in_rect_time = 0
+    # -------------------------------------------------------------------------
+    if len(boxes) > 0 and detected:
+        # 공 중심좌표 (x_center, y_center)가 사각형 내부인지 확인
+        if (drag_rect_x <= x_center < drag_rect_x + drag_rect_w and
+            drag_rect_y <= y_center < drag_rect_y + drag_rect_h):
+            if ball_in_rect_start is None:
+                ball_in_rect_start = time.time()
+            in_rect_time = time.time() - ball_in_rect_start
+        else:
+            in_rect_time = 0.0
+            ball_in_rect_start = None
+    else:
+        in_rect_time = 0.0
+        ball_in_rect_start = None
+
+    # -------------------------------------------------------------------------
+    # state==ready 인 상태에서 공이 안보이는(=detected=False) 1초 경과 시 waiting으로
+    # -------------------------------------------------------------------------
+    if current_state == "ready":
+        if last_detection_time is not None and (time.time() - last_detection_time) > 1.0:
+            current_state = "waiting"
+            print("State changed to WAITING (no detection for 1s in READY)")
+
+    # -------------------------------------------------------------------------
+    # "TRACKING" → "WAITING" 조건(1): 마지막 검출 이후 1초 이상 감지 X
+    # -------------------------------------------------------------------------
     if current_state == "tracking":
         if last_detection_time is not None and (time.time() - last_detection_time) >= 1.0:
+            bounce_history.append(bounce_count)
+            if len(bounce_history) > 8:
+                bounce_history.pop(0)
+
             bounce_count = 0
             consecutiveDownCount = 0
             consecutiveUpCount = 0
@@ -525,19 +746,97 @@ while True:
             current_state = "waiting"
             print("No detection for 1 second in TRACKING => bounce_count reset to 0, state changed to WAITING")
 
+    # 그래프 데이터 길이 제한
     if len(x_values) > MAX_POINTS:
         x_values.pop(0)
         y_values.pop(0)
         orange_pixel_values.pop(0)
 
+    # 바운스 연속 감지 제한 (Optional)
     if last_bounce_time is not None:
         if time.time() - last_bounce_time > CONTINUOUS_TIMEOUT:
             bounce_count = 0
             last_bounce_time = None
             print("No bounce for a while -> reset bounce_count to 0")
 
+    # ------------------------------------------------------------------------------------
+    # (B) Combined 화면 만들기
+    # ------------------------------------------------------------------------------------
+    combined_img = np.zeros((960, 1280, 3), dtype=np.uint8)
+
+    # 먼저 y_graph_img, orange_graph_img, frame_resized 등 생성
     frame_resized = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
 
+    # ### (추가/수정 부분) : 여기서 frame_resized에 State, FPS, Bounce Dt를 표시
+    cv2.putText(
+        frame_resized,
+        f"State: {current_state.upper()}",
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.0,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA
+    )
+    cv2.putText(
+        frame_resized,
+        f"FPS: {fps:.2f}",
+        (10, 60),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.0,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA
+    )
+    if bounce_time_diff is not None:
+        cv2.putText(
+            frame_resized,
+            f"Bounce Dt: {bounce_time_diff:.2f}s",
+            (10, 90),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA
+        )
+
+    # 드래그/리사이즈 사각형
+    cv2.rectangle(
+        frame_resized,
+        (drag_rect_x, drag_rect_y),
+        (drag_rect_x + drag_rect_w, drag_rect_y + drag_rect_h),
+        (0, 0, 255),
+        2
+    )
+    # 각 코너 표시
+    corners = [
+        (drag_rect_x, drag_rect_y),
+        (drag_rect_x + drag_rect_w, drag_rect_y),
+        (drag_rect_x, drag_rect_y + drag_rect_h),
+        (drag_rect_x + drag_rect_w, drag_rect_y + drag_rect_h)
+    ]
+    for (cx, cy) in corners:
+        cv2.rectangle(
+            frame_resized,
+            (cx - corner_size, cy - corner_size),
+            (cx + corner_size, cy + corner_size),
+            (0, 0, 255),
+            -1
+        )
+
+    # 사각형 내부 실시간 시간 표시
+    cv2.putText(
+        frame_resized,
+        f"In-Rect Time: {in_rect_time:.2f}s",
+        (drag_rect_x + 5, drag_rect_y + 25),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 0, 255),
+        2,
+        cv2.LINE_AA
+    )
+
+    # y_graph / orange_graph
     y_graph_img = draw_y_graph(
         x_values,
         y_values,
@@ -546,7 +845,6 @@ while True:
         max_y=480,
         bounce_pts=bounce_points
     )
-
     valid_orange = [v for v in orange_pixel_values if v is not None]
     max_orange = max(valid_orange) if valid_orange else 1
     orange_graph_img = draw_orange_graph(
@@ -557,52 +855,150 @@ while True:
         max_y=max_orange
     )
 
-    combined_img = np.zeros((960, 1280, 3), dtype=np.uint8)
-    combined_img[0:480, 0:640] = frame_resized
-    combined_img[0:480, 640:1280] = y_graph_img
-    combined_img[480:960, 0:640] = orange_graph_img
+    # enlarged_view 여부에 따라 화면 배치
+    if enlarged_view is None:
+        # 4분할 표시
+        combined_img[0:480, 0:640] = frame_resized       # top-left
+        combined_img[0:480, 640:1280] = y_graph_img      # top-right
+        combined_img[480:960, 0:640] = orange_graph_img  # bottom-left
 
-    cv2.putText(
-        combined_img,
-        f"State: {current_state.upper()}",
-        (10, 30),
-        state_font,
-        1.0,
-        state_font_color,
-        state_font_thickness,
-        cv2.LINE_AA
-    )
+        # bottom-right (480:960, 640:1280) => bounce_history 표시
+        square_width = 55
+        margin = 20
+        num_squares = 8
+        total_width = num_squares * square_width + (num_squares - 1) * margin
+        offset_x = 1280 - total_width - margin
+        offset_y = 960 - square_width - margin
 
-    # FPS 표시
-    cv2.putText(
-        combined_img,
-        f"FPS: {fps:.2f}",
-        (10, 60),
-        state_font,
-        1.0,
-        (0, 0, 0),
-        state_font_thickness,
-        cv2.LINE_AA
-    )
+        # 각 사각형에 이름과 숫자를 표시하기 위한 리스트 (예시)
+        names = [f"Name{i+1}" for i in range(num_squares)]
+        numbers = bounce_history[-num_squares:]  # 마지막 8개 값 사용
 
-    # =========================================================================
-    # ## (추가된 부분) bounce_time_diff를 FPS 표시 바로 아래(예: y=90)에 표시
-    # =========================================================================
-    if bounce_time_diff is not None:
-        cv2.putText(
-            combined_img,
-            f"Bounce Dt: {bounce_time_diff:.2f}s",
-            (10, 90),  # FPS표시가 (10,60)이므로 그 바로 아래 90
-            state_font,
-            1.0,
-            (0, 0, 0),
-            state_font_thickness,
-            cv2.LINE_AA
-        )
-    # -------------------------------------------------------------------------
+        for i in range(num_squares):
+            x1 = offset_x + i * (square_width + margin)
+            y1 = offset_y
+            x2 = x1 + square_width
+            y2 = y1 + square_width
 
+            # 사각형 그리기
+            cv2.rectangle(combined_img, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+            if i < len(numbers):
+                # 이름 그리기 (사각형 위쪽)
+                name = names[i]
+                (text_w, text_h), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
+                text_x = x1 + (square_width - text_w) // 2
+                text_y = y1 + text_h + 2  # 사각형 위쪽 여백
+                cv2.putText(
+                    combined_img,
+                    name,
+                    (x1, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.3,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA
+                )
+
+                # 숫자 그리기 (사각형 아래쪽)
+                number = str(numbers[i])
+                (num_w, num_h), _ = cv2.getTextSize(number, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                num_x = x1 + (square_width - num_w) // 2
+                num_y = y2 - 5  # 사각형 아래쪽 여백
+                cv2.putText(
+                    combined_img,
+                    number,
+                    (x1, num_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA
+                )
+
+    else:
+        # (A) 'tl', 'tr', 'bl', 'br' 중 하나만 크게
+        if enlarged_view == 'tl':
+            big_view = cv2.resize(frame_resized, (1280, 960), interpolation=cv2.INTER_AREA)
+            combined_img = big_view
+        elif enlarged_view == 'tr':
+            big_view = cv2.resize(y_graph_img, (1280, 960), interpolation=cv2.INTER_AREA)
+            combined_img = big_view
+        elif enlarged_view == 'bl':
+            big_view = cv2.resize(orange_graph_img, (1280, 960), interpolation=cv2.INTER_AREA)
+            combined_img = big_view
+        elif enlarged_view == 'br':
+            # (A) 'tl', 'tr', 'bl', 'br' 중 하나만 크게
+            # 1) bottom-right 확대를 위해 640x480 캔버스(sub_img) 만들기
+            sub_img = np.zeros((480, 640, 3), dtype=np.uint8)
+
+            # 사각형 세로 길이를 조정할 변수 도입
+            rectangle_height = 80  # 원하는 세로 길이로 조정
+
+            # 2) bounce history 사각형을 그리는 로직 수행
+            #    (4분할에서 bottom-right에 그리던 부분을 수정)
+            square_width = 55
+            margin = 20
+            num_squares = 8
+            total_width = num_squares * square_width + (num_squares - 1) * margin
+            offset_x = 640 - total_width - margin
+            offset_y = 480 - rectangle_height - margin  # 세로 위치 조정
+
+            # 각 사각형에 이름과 숫자를 표시하기 위한 리스트 (예시)
+            names = [f"Name{i+1}" for i in range(num_squares)]
+            # 예시로 bounce_history를 이름과 매칭 (실제 데이터에 맞게 수정 필요)
+            numbers = bounce_history[-num_squares:]  # 마지막 8개 값 사용
+
+            for i in range(num_squares):
+                x1 = offset_x + i * (square_width + margin)
+                y1 = offset_y
+                x2 = x1 + square_width
+                y2 = y1 + rectangle_height
+
+                # 사각형 그리기
+                cv2.rectangle(sub_img, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+                if i < len(numbers):
+                    # 이름 그리기 (사각형 위쪽)
+                    name = names[i]
+                    (text_w, text_h), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                    text_x = x1 + (square_width - text_w) // 2
+                    text_y = y1 + text_h + 5  # 사각형 위쪽 여백
+                    cv2.putText(
+                        sub_img,
+                        name,
+                        (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA
+                    )
+
+                    # 숫자 그리기 (사각형 아래쪽)
+                    number = str(numbers[i])
+                    (num_w, num_h), _ = cv2.getTextSize(number, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)
+                    num_x = x1 + (square_width - num_w) // 2
+                    num_y = y2 - 10  # 사각형 아래쪽 여백
+                    cv2.putText(
+                        sub_img,
+                        number,
+                        (num_x, num_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.0,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA
+                    )
+
+            # 3) 완성된 sub_img를 1280x960으로 확대 후 combined_img에 넣기
+            big_view = cv2.resize(sub_img, (1280, 960), interpolation=cv2.INTER_AREA)
+            combined_img = big_view
+
+    # 최종 표시
     cv2.imshow("Combined", combined_img)
 
+    # 바운스 카운트 전용 윈도우
     if bounce_count != prev_bounce_count:
         color = get_color(bounce_count)
         bounce_img = render_text_with_ttf(
@@ -619,14 +1015,20 @@ while True:
         cv2.imshow("Bounce Count Window", bounce_img)
 
     key = cv2.waitKey(1) & 0xFF
-    if key == 27:
+    if key == 27:  # ESC
         break
     elif key in [ord('f'), ord('F')]:
         if is_fullscreen_combined:
             cv2.setWindowProperty("Combined", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
         else:
             cv2.setWindowProperty("Combined", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            
+        if is_fullscreen_bounce:
+            cv2.setWindowProperty("Bounce Count Window", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+        else:
+            cv2.setWindowProperty("Bounce Count Window", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         is_fullscreen_combined = not is_fullscreen_combined
+        is_fullscreen_bounce = not is_fullscreen_bounce
 
 # ----------------------------------------------------------------------------------------
 # 16) 종료 처리
