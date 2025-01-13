@@ -80,25 +80,25 @@ intensity_levels = [0.5 + 0.05 * i for i in range(10)]  # 각 색상의 밝기 �
 
 def get_color(count):
     if count >= 1000:  # 바운스 카운트가 1000 이상이면 보라색 반환 (예: count=1234 -> (255,0,255))
-        return (255, 0, 255)
+        return (255, 0, 255) #1000이상이면 다른 함수 없이 보라색 리턴함.
 
     color_index = count // 100  # 100단위로 기본 색상 결정 (예: count=234 -> index=2)
     if color_index >= len(color_sequence):  # 색상 시퀀스 범위 초과 시 마지막 색상 사용
         color_index = len(color_sequence) - 1  # (예: color_index=11 -> 9로 조정)
 
     step_in_block = (count % 100) // 10  # 각 색상 내에서 10단위로 "밝기 단계" 결정 (예: count=234 -> step=3 밝기 단계 step 0...9)
-    intensity = intensity_levels[step_in_block] if step_in_block < len(intensity_levels) else 1.0  # 밝기 레벨 선택 (예: step=3 -> 0.65)
+    intensity = intensity_levels[step_in_block] if step_in_block < len(intensity_levels) else 1.0  # '특정' 밝기 레벨 선택 (예: step=3 -> 0.65)
     base_color = color_sequence[color_index]  # 기본 색상 선택 (예: (0,255,0))
 
-    color_bgr = np.uint8([[base_color]])  # BGR 색상을 numpy 배열로 변환 (예: [[[0,255,0]]])
-    color_hsv = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2HSV)[0][0]  # BGR을 HSV로 변환 (예: [60,255,255])
+    color_bgr = np.uint8([[base_color]])  # BGR 색상을 numpy 3차원 배열로 변환 (예: [[[0,255,0]]])
+    color_hsv = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2HSV)[0][0]  # BGR을 HSV로 변환 (예: 괄호가 하나만 깔끔하게 있게 하기위해 [0][0] 추가 [60,255,255])
 
     color_hsv = color_hsv.astype(float)  # HSV 값을 실수형으로 변환하여 연산 가능하게 함
-    color_hsv[2] = min(color_hsv[2] * intensity, 255)  # Value(밝기) 값 조정 (예: 255 * 0.65 = 165.75)
-    color_hsv = color_hsv.astype(np.uint8)  # 다시 정수형으로 변환
+    color_hsv[2] = min(color_hsv[2] * intensity, 255)  # Value(밝기) 값 조정 (예: 255 * 0.65 = 165.75) 밝기 적용이 됨
+    color_hsv = color_hsv.astype(np.uint8)  # 다시 정수형으로 변환 [H.0,S.0,V.0] -> [H,S,밝기 필터 적용된 V] (10마다 밝기 바뀌는거 고려해서)
 
-    intense_color = cv2.cvtColor(np.uint8([[color_hsv]]), cv2.COLOR_HSV2BGR)[0][0]  # HSV를 BGR로 다시 변환
-    intense_color_rgb = (intense_color[2], intense_color[1], intense_color[0])  # BGR을 RGB로 변환 (예: (0,165,0))
+    intense_color = cv2.cvtColor(np.uint8([[color_hsv]]), cv2.COLOR_HSV2BGR)[0][0]  # HSV를 BGR로 다시 변환 3차원 배열에서 그냥 배열로 하기위해 [0][0] 처리
+    intense_color_rgb = (intense_color[2], intense_color[1], intense_color[0])  # BGR을 RGB로 변환 (예: [1,2,3]->[3,2,1]) PILLOW에서는 RGB 쓰기때문에!
     return intense_color_rgb  # 최종 RGB 색상 반환
 
 # =============================================================================
@@ -108,13 +108,13 @@ drag_rect_x, drag_rect_y = 100, 100  # 사각형 왼상단 초기 위치
 drag_rect_w, drag_rect_h = 150, 150  # 사각형 폭, 높이
 dragging = False                     # 현재 드래그(이동) 중인지 여부
 resizing_corner = None               # 현재 리사이즈 중인 corner (None, 'tl', 'tr', 'bl', 'br')
-drag_offset_x, drag_offset_y = 0, 0  # (이동용) 드래그 시작점 대비 사각형 내부 오프셋
+drag_offset_x, drag_offset_y = 0, 0  # (이동용) 드래그 시작점 대비 사각형 내부 오프셋 이걸 통해 드래그해서 움직였을때 사각형의 새로운 왼쪽 상단 좌표 알수 있음!
 corner_size = 10                     # 각 모서리 핸들의 반지름(또는 반폭)
 
 # =============================================================================
 # 사각형 내부에서 공이 감지된 시간을 실시간으로 표시하기 위한 변수
 # =============================================================================
-ball_in_rect_start = None   # 사각형 안에 공이 들어온 시점(초)
+ball_in_rect_start = None   # 사각형 안에 공이 처음 들어온 시점(초)
 in_rect_time = 0.0          # 사각형 안에 있는 동안의 시간(실시간 업데이트)
 
 # ----------------------------------------------------------------------------------------
@@ -125,106 +125,127 @@ enlarged_view = None  # 'tl', 'tr', 'bl', 'br' or None (기본값: None=4분할)
 # ----------------------------------------------------------------------------------------
 # 9) mouse_callback 함수
 # ----------------------------------------------------------------------------------------
-last_mouse_move_time = time.time()
-mouse_visible = True
+last_mouse_move_time = time.time() #현재 시간!
+mouse_visible = True #마우스 커서 처음에 보이게 하기위에 True 설정
 
 def mouse_callback(event, x, y, flags, param):
+    # 1. 소리/오렌지색 감지 관련 전역변수
+    # 예: sound_enabled=True이면 소리 켜짐, ignore_zero_orange=True이면 오렌지색 픽셀에 따른 검출 필터 무시
     global sound_enabled, ignore_zero_orange
+
+    # 2. 마우스 커서 표시/숨김 관련 전역변수
+    # 예: last_mouse_move_time=현재시간, mouse_visible=True이면 커서 보임
     global last_mouse_move_time, mouse_visible
+
+    # 3. 사각형 드래그(이동) 관련 전역변수
+    # 예: dragging=True이면 드래그 중, offset=(10,20)이면 마우스 클릭점과 사각형 좌상단의 거리
     global dragging, drag_offset_x, drag_offset_y
+
+    # 4. 사각형의 위치/크기 관련 전역변수
+    # 예: drag_rect_x=100, y=100이면 좌상단 좌표가 (100,100)
+    # 예: drag_rect_w=150, h=150이면 폭과 높이가 각각 150
     global drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h
+
+    # 5. 사각형 크기조절 관련 전역변수
+    # 예: resizing_corner='tl'이면 좌상단 모서리를 드래그하여 크기조절 중
     global resizing_corner
+
+    # 6. 화면 확대/축소 관련 전역변수
+    # 예: enlarged_view='tr'이면 우상단 영역이 확대되어 전체화면에 표시됨
     global enlarged_view  # (A) 우클릭 확대/복귀
 
-    if event == cv2.EVENT_MOUSEMOVE:
-        last_mouse_move_time = time.time()
-        if not mouse_visible:
-            user32.ShowCursor(True)
-            mouse_visible = True
+    if event == cv2.EVENT_MOUSEMOVE:                                     # 마우스가 움직일 때마다
+        last_mouse_move_time = time.time()                               # 마지막 마우스 움직임 시간 갱신 
+        if not mouse_visible:                                            # 마우스가 숨겨져 있다면
+            user32.ShowCursor(True)                                      # 마우스 커서 보이게 하고
+            mouse_visible = True                                         # 마우스 보임 상태로 변경
 
         # 리사이즈 중이면 각 코너별로 크기 갱신
-        if resizing_corner is not None:
-            if resizing_corner == 'tl':
-                new_w = drag_rect_w + (drag_rect_x - x)
-                new_h = drag_rect_h + (drag_rect_y - y)
-                new_x = x
-                new_y = y
-                if new_w < 10:
-                    new_w = 10
-                    new_x = drag_rect_x + drag_rect_w - 10
-                if new_h < 10:
-                    new_h = 10
-                    new_y = drag_rect_y + drag_rect_h - 10
-                new_x = max(0, min(new_x, drag_rect_x + drag_rect_w))
-                new_y = max(0, min(new_y, drag_rect_y + drag_rect_h))
+        if resizing_corner is not None:                                 # 현재 모서리를 드래그해서 크기 조절 중이라면
+            if resizing_corner == 'tl':                                 # 왼쪽 상단(Top-Left) 모서리를 드래그 중일 때
+                new_w = drag_rect_w + (drag_rect_x - x)                 # 예: 기존 너비 150 + (기존 x 100 - 현재 x 80) = 170
+                new_h = drag_rect_h + (drag_rect_y - y)                 # 예: 기존 높이 150 + (기존 y 100 - 현재 y 80) = 170
+                new_x = x                                               # 새로운 x 좌표는 마우스 현재 위치
+                new_y = y                                               # 새로운 y 좌표는 마우스 현재 위치
+                if new_w < 10:                                          # 너비가 10 미만이면
+                    new_w = 10                                          # 최소 너비 10으로 제한
+                    new_x = drag_rect_x + drag_rect_w - 10              # 좌상단(매우중요)x 좌표도 그에 맞게 조정
+                if new_h < 10:                                          # 높이가 10 미만이면
+                    new_h = 10                                          # 좌상단(매우중요) 최소 높이 10으로 제한
+                    new_y = drag_rect_y + drag_rect_h - 10              # y 좌표도 그에 맞게 조정
+                #마우스의 좌표 new_x와 우상단 x좌표와 비교함. 리사이즈 하려해도 뒤집어지지 않고 제한함.
+                new_x = max(0, min(new_x, drag_rect_x + drag_rect_w))   # x 좌표가 원래 사각형 범위를 벗어나지 않도록
+                #마우스의 좌표 new_y와 좌하단 y좌표와 비교함. 리사이즈 하려해도 뒤집어지지 않고 제한함. 
+                new_y = max(0, min(new_y, drag_rect_y + drag_rect_h))   # y 좌표가 원래 사각형 범위를 벗어나지 않도록
 
-                if new_x < 0: new_x = 0
-                if new_y < 0: new_y = 0
-                if new_x > 640: new_x = 640
-                if new_y > 480: new_y = 480
+                if new_x < 0: new_x = 0                                 # 화면 왼쪽 경계 체크 드래그 해서 밀어도 음수쪽으로 못감.
+                if new_y < 0: new_y = 0                                 # 화면 위쪽 경계 체크 드래그 해서 밀어도 음수쪽으로 못감.   
+                if new_x > 640: new_x = 640                            # 화면 오른쪽 경계 체크 드래그 해서 밀어도 640초과로 못감.
+                if new_y > 480: new_y = 480                            # 화면 아래쪽 경계 체크 드래그 해서 밀어도 480초과로 못감.
 
-                drag_rect_w = new_w
-                drag_rect_h = new_h
-                drag_rect_x = new_x
-                drag_rect_y = new_y
+                drag_rect_w = new_w                                     # 계산된 새로운 너비 적용
+                drag_rect_h = new_h                                     # 계산된 새로운 높이 적용
+                drag_rect_x = new_x                                     # 계산된 새로운 좌상단 x 좌표 적용
+                drag_rect_y = new_y                                     # 계산된 새로운 좌상단 y 좌표 적용
 
-            elif resizing_corner == 'tr':
-                new_w = x - drag_rect_x
-                new_h = drag_rect_h + (drag_rect_y - y)
-                new_y = y
-                if new_w < 10:
-                    new_w = 10
-                if new_h < 10:
-                    new_h = 10
-                    new_y = drag_rect_y + drag_rect_h - 10
-                if new_w > 640 - drag_rect_x:
-                    new_w = 640 - drag_rect_x
-                if new_y < 0:
-                    new_y = 0
+            elif resizing_corner == 'tr':                               # 오른쪽 상단(Top-Right) 모서리를 드래그 중일 때
+                new_w = x - drag_rect_x                                 # 예: 현재 x 200 - 기존 x 100 = 100 (새 너비)
+                new_h = drag_rect_h + (drag_rect_y - y)                 # 예: 기존 높이 150 + (기존 y 100 - 현재 y 80) = 170
+                new_y = y                 
+                #new_x는 tr잡고 리사이징 할때 좌상단은 아무리해도 그대로여서 그대로 두면됨.                      
+                if new_w < 10:                                          # 너비가 10 미만이면
+                    new_w = 10                                          # 최소 너비 10으로 제한
+                if new_h < 10:                                          # 높이가 10 미만이면
+                    new_h = 10                                          # 최소 높이 10으로 제한
+                    new_y = drag_rect_y + drag_rect_h - 10              # y 좌표도 그에 맞게 조정
+                if new_w > 640 - drag_rect_x:                          # 화면 오른쪽 경계를 넘어가면
+                    new_w = 640 - drag_rect_x                          # 최대 너비로 제한
+                if new_y < 0:                                          # 화면 위쪽 경계를 넘어가면
+                    new_y = 0                                          # y 좌표를 0으로 제한
 
-                drag_rect_w = new_w
-                drag_rect_h = new_h
-                drag_rect_y = new_y
+                drag_rect_w = new_w                                     # 계산된 새로운 너비 적용
+                drag_rect_h = new_h                                     # 계산된 새로운 높이 적용
+                drag_rect_y = new_y                                     # 계산된 새로운 y 좌표 적용
 
-            elif resizing_corner == 'bl':
-                new_w = drag_rect_w + (drag_rect_x - x)
-                new_h = y - drag_rect_y
-                new_x = x
-                if new_w < 10:
-                    new_w = 10
-                    new_x = drag_rect_x + drag_rect_w - 10
-                if new_h < 10:
-                    new_h = 10
-                if new_x < 0:
-                    new_x = 0
-                if new_h > 480 - drag_rect_y:
-                    new_h = 480 - drag_rect_y
+            elif resizing_corner == 'bl':                               # 왼쪽 하단(Bottom-Left) 모서리를 드래그 중일 때
+                new_w = drag_rect_w + (drag_rect_x - x)                 # 예: 기존 너비 150 + (기존 x 100 - 현재 x 80) = 170
+                new_h = y - drag_rect_y                                 # 예: 현재 y 200 - 기존 y 100 = 100 (새 높이)
+                new_x = x                                               # 새로운 x 좌표는 마우스 현재 위치
+                if new_w < 10:                                          # 너비가 10 미만이면
+                    new_w = 10                                          # 최소 너비 10으로 제한
+                    new_x = drag_rect_x + drag_rect_w - 10              # x 좌표도 그에 맞게 조정
+                if new_h < 10:                                          # 높이가 10 미만이면
+                    new_h = 10                                          # 최소 높이 10으로 제한
+                if new_x < 0:                                          # 화면 왼쪽 경계를 넘어가면
+                    new_x = 0                                          # x 좌표를 0으로 제한
+                if new_h > 480 - drag_rect_y:                          # 화면 아래쪽 경계를 넘어가면
+                    new_h = 480 - drag_rect_y                          # 최대 높이로 제한
 
-                drag_rect_w = new_w
-                drag_rect_h = new_h
-                drag_rect_x = new_x
+                drag_rect_w = new_w                                     # 계산된 새로운 너비 적용
+                drag_rect_h = new_h                                     # 계산된 새로운 높이 적용
+                drag_rect_x = new_x                                     # 계산된 새로운 x 좌표 적용
 
-            elif resizing_corner == 'br':
-                new_w = x - drag_rect_x
-                new_h = y - drag_rect_y
-                if new_w < 10:
-                    new_w = 10
-                if new_h < 10:
-                    new_h = 10
-                if new_w > 640 - drag_rect_x:
-                    new_w = 640 - drag_rect_x
-                if new_h > 480 - drag_rect_y:
-                    new_h = 480 - drag_rect_y
+            elif resizing_corner == 'br':                               # 오른쪽 하단(Bottom-Right) 모서리를 드래그 중일 때
+                new_w = x - drag_rect_x                                 # 예: 현재 x 200 - 기존 x 100 = 100 (새 너비)
+                new_h = y - drag_rect_y                                 # 예: 현재 y 200 - 기존 y 100 = 100 (새 높이)
+                if new_w < 10:                                          # 너비가 10 미만이면
+                    new_w = 10                                          # 최소 너비 10으로 제한
+                if new_h < 10:                                          # 높이가 10 미만이면
+                    new_h = 10                                          # 최소 높이 10으로 제한
+                if new_w > 640 - drag_rect_x:                          # 화면 오른쪽 경계를 넘어가면
+                    new_w = 640 - drag_rect_x                          # 최대 너비로 제한
+                if new_h > 480 - drag_rect_y:                          # 화면 아래쪽 경계를 넘어가면
+                    new_h = 480 - drag_rect_y                          # 최대 높이로 제한
 
-                drag_rect_w = new_w
-                drag_rect_h = new_h
+                drag_rect_w = new_w                                     # 계산된 새로운 너비 적용
+                drag_rect_h = new_h                                     # 계산된 새로운 높이 적용
 
-        elif dragging:
-            new_x = x - drag_offset_x
-            new_y = y - drag_offset_y
-            new_x = max(0, min(new_x, 640 - drag_rect_w))
-            new_y = max(0, min(new_y, 480 - drag_rect_h))
-            drag_rect_x, drag_rect_y = new_x, new_y
+        elif dragging:                                                  # 사각형을 드래그해서 이동 중이라면
+            new_x = x - drag_offset_x                                   # 예: 현재 x 200 - 오프셋 50 = 150 (새 x 좌표)
+            new_y = y - drag_offset_y                                   # 예: 현재 y 200 - 오프셋 50 = 150 (새 y 좌표)
+            new_x = max(0, min(new_x, 640 - drag_rect_w))              # x 좌표가 화면을 벗어나지 않도록 제한
+            new_y = max(0, min(new_y, 480 - drag_rect_h))              # y 좌표가 화면을 벗어나지 않도록 제한
+            drag_rect_x, drag_rect_y = new_x, new_y                    # 계산된 새로운 위치 적용
 
     elif event == cv2.EVENT_LBUTTONDOWN:
         # 사운드 ON/OFF 버튼
@@ -326,179 +347,179 @@ def render_text_with_ttf(
 # ----------------------------------------------------------------------------------------
 def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=None):
     if bounce_pts is None:
-        bounce_pts = []
+        bounce_pts = []  # bounce_pts가 None이면 빈 리스트로 초기화 (예: bounce_pts = [])
 
-    graph_img = np.zeros((height, width, 3), dtype=np.uint8)
+    graph_img = np.zeros((height, width, 3), dtype=np.uint8)  # 검은색 배경 이미지 생성 (예: 640x480 크기의 검은색 이미지)
     if len(x_data) < 2:
-        return graph_img
+        return graph_img  # 데이터가 2개 미만이면 빈 이미지 반환 (예: x_data=[1]일 때)
 
-    max_x = x_data[-1] if x_data[-1] != 0 else 1
+    max_x = x_data[-1] if x_data[-1] != 0 else 1  # x축 최대값 설정 (예: x_data=[0,1,2,3]이면 max_x=3)
 
-    for i in range(len(x_data) - 1):
+    for i in range(len(x_data) - 1):  # 연속된 두 점을 선으로 연결
         if y_data[i] is None or y_data[i+1] is None:
-            continue
-        x1_ori, y1_ori = x_data[i], y_data[i]
-        x2_ori, y2_ori = x_data[i+1], y_data[i+1]
+            continue  # None 값이 있으면 건너뜀 (예: y_data=[100,None,300]일 때 None 건너뜀)
+        x1_ori, y1_ori = x_data[i], y_data[i]  # 첫 번째 점의 원본 좌표 (예: x1_ori=1, y1_ori=100)
+        x2_ori, y2_ori = x_data[i+1], y_data[i+1]  # 두 번째 점의 원본 좌표 (예: x2_ori=2, y2_ori=200)
 
-        x1 = int((x1_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))
-        x2 = int((x2_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))
+        x1 = int((x1_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))  # x1 화면 좌표 변환 (예: 1 -> 213)
+        x2 = int((x2_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))  # x2 화면 좌표 변환 (예: 2 -> 426)
 
-        y1 = int(y1_ori / max_y * (height - 1))
-        y2 = int(y2_ori / max_y * (height - 1))
+        y1 = int(y1_ori / max_y * (height - 1))  # y1 화면 좌표 변환 (예: 100 -> 100)
+        y2 = int(y2_ori / max_y * (height - 1))  # y2 화면 좌표 변환 (예: 200 -> 200)
 
-        cv2.line(graph_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.line(graph_img, (x1, y1), (x2, y2), (0, 255, 0), 2)  # 초록색 선 그리기 (예: (213,100)에서 (426,200)까지)
 
-    for i in range(len(x_data)):
+    for i in range(len(x_data)):  # 각 데이터 포인트에 파란색 원 그리기
         if y_data[i] is None:
-            continue
-        x_ori, y_ori = x_data[i], y_data[i]
-        x_pt = int((x_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))
-        y_pt = int(y_ori / max_y * (height - 1))
-        cv2.circle(graph_img, (x_pt, y_pt), 4, (255, 0, 0), -1)
+            continue  # None 값 건너뜀 (예: y_data=[100,None,300]일 때 None 건너뜀)
+        x_ori, y_ori = x_data[i], y_data[i]  # 원본 좌표 (예: x_ori=1, y_ori=100)
+        x_pt = int((x_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))  # x 화면 좌표 변환 (예: 1 -> 213)
+        y_pt = int(y_ori / max_y * (height - 1))  # y 화면 좌표 변환 (예: 100 -> 100)
+        cv2.circle(graph_img, (x_pt, y_pt), 4, (255, 0, 0), -1)  # 파란색 원 그리기 (예: (213,100)에 반지름 4 원)
 
-    for (bx_ori, by_ori) in bounce_pts:
+    for (bx_ori, by_ori) in bounce_pts:  # 바운스 포인트에 빨간색 원 그리기
         if bx_ori < x_data[0]:
-            continue
-        bx = int((bx_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))
-        by = int(by_ori / max_y * (height - 1))
-        cv2.circle(graph_img, (bx, by), 5, (0, 0, 255), -1)
+            continue  # x축 범위 밖의 바운스 포인트 건너뜀 (예: bx_ori=0, x_data[0]=1일 때)
+        bx = int((bx_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))  # x 화면 좌표 변환 (예: 2 -> 426)
+        by = int(by_ori / max_y * (height - 1))  # y 화면 좌표 변환 (예: 300 -> 300)
+        cv2.circle(graph_img, (bx, by), 5, (0, 0, 255), -1)  # 빨간색 원 그리기 (예: (426,300)에 반지름 5 원)
 
-    # 사운드 ON/OFF 버튼
+    # 사운드 ON/OFF 버튼 그리기
     cv2.rectangle(
         graph_img,
-        (button_rect[0], button_rect[1]),
-        (button_rect[0] + button_rect[2], button_rect[1] + button_rect[3]),
-        (120, 120, 120),
+        (button_rect[0], button_rect[1]),  # 버튼 좌상단 좌표 (예: (10,10))
+        (button_rect[0] + button_rect[2], button_rect[1] + button_rect[3]),  # 버튼 우하단 좌표 (예: (110,40))
+        (120, 120, 120),  # 회색
         -1
     )
-    text_sound = "Sound: ON" if sound_enabled else "Sound: OFF"
+    text_sound = "Sound: ON" if sound_enabled else "Sound: OFF"  # 사운드 상태 텍스트 (예: "Sound: ON")
     cv2.putText(
         graph_img,
         text_sound,
-        (button_rect[0] + 10, button_rect[1] + 25),
+        (button_rect[0] + 10, button_rect[1] + 25),  # 텍스트 위치 (예: (20,35))
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        (255, 255, 255),
-        2
+        0.6,  # 폰트 크기
+        (255, 255, 255),  # 흰색
+        2  # 텍스트 두께
     )
 
-    # Ignore0 버튼
+    # Ignore0 버튼 그리기
     cv2.rectangle(
         graph_img,
-        (button_rect_ignore[0], button_rect_ignore[1]),
-        (button_rect_ignore[0] + button_rect_ignore[2], button_rect_ignore[1] + button_rect_ignore[3]),
-        (120, 120, 120),
+        (button_rect_ignore[0], button_rect_ignore[1]),  # 버튼 좌상단 좌표 (예: (120,10))
+        (button_rect_ignore[0] + button_rect_ignore[2], button_rect_ignore[1] + button_rect_ignore[3]),  # 버튼 우하단 좌표 (예: (220,40))
+        (120, 120, 120),  # 회색
         -1
     )
-    text_ignore = "Ignore0: ON" if ignore_zero_orange else "Ignore0: OFF"
+    text_ignore = "Ignore0: ON" if ignore_zero_orange else "Ignore0: OFF"  # Ignore0 상태 텍스트 (예: "Ignore0: ON")
     cv2.putText(
         graph_img,
         text_ignore,
-        (button_rect_ignore[0] + 5, button_rect_ignore[1] + 25),
+        (button_rect_ignore[0] + 5, button_rect_ignore[1] + 25),  # 텍스트 위치 (예: (125,35))
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        (255, 255, 255),
-        2
+        0.6,  # 폰트 크기
+        (255, 255, 255),  # 흰색
+        2  # 텍스트 두께
     )
 
-    return graph_img
+    return graph_img  # 완성된 그래프 이미지 반환
 
 # ----------------------------------------------------------------------------------------
 # 12) 오렌지 픽셀 그래프 그리기 함수
 # ----------------------------------------------------------------------------------------
-def draw_orange_graph(x_data, orange_data, width=640, height=480, max_y=None):
-    if max_y is None:
-        valid_orange_data = [v for v in orange_data if v is not None]
-        max_y = max(valid_orange_data) if valid_orange_data else 1
+def draw_orange_graph(x_data, orange_data, width=640, height=480, max_y=None):  # 예: x_data=[1,2,3], orange_data=[100,200,300]
+    if max_y is None:  # max_y가 지정되지 않은 경우
+        valid_orange_data = [v for v in orange_data if v is not None]  # 예: [100,200,300] 
+        max_y = max(valid_orange_data) if valid_orange_data else 1  # 예: max_y = 300
 
-    graph_img = np.zeros((height, width, 3), dtype=np.uint8)
-    if len(x_data) < 2:
+    graph_img = np.zeros((height, width, 3), dtype=np.uint8)  # 예: 480x640 크기의 검은색 이미지 생성
+    if len(x_data) < 2:  # 데이터가 2개 미만이면 빈 이미지 반환
         return graph_img
 
-    max_x = x_data[-1] if x_data[-1] != 0 else 1
+    max_x = x_data[-1] if x_data[-1] != 0 else 1  # 예: x축 최대값 = 3
 
-    for i in range(len(x_data) - 1):
-        if orange_data[i] is None or orange_data[i+1] is None:
+    for i in range(len(x_data) - 1):  # 각 데이터 포인트를 선으로 연결
+        if orange_data[i] is None or orange_data[i+1] is None:  # None 값은 건너뜀
             continue
-        x1_ori, y1_ori = x_data[i], orange_data[i]
-        x2_ori, y2_ori = x_data[i+1], orange_data[i+1]
+        x1_ori, y1_ori = x_data[i], orange_data[i]  # 예: (1,100)
+        x2_ori, y2_ori = x_data[i+1], orange_data[i+1]  # 예: (2,200)
 
-        x1 = int((x1_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))
-        x2 = int((x2_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))
+        x1 = int((x1_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))  # 예: 1 -> 213
+        x2 = int((x2_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))  # 예: 2 -> 426
 
-        y1 = int(y1_ori / max_y * (height - 1)) if max_y > 0 else 0
-        y2 = int(y2_ori / max_y * (height - 1)) if max_y > 0 else 0
+        y1 = int(y1_ori / max_y * (height - 1)) if max_y > 0 else 0  # 예: 100 -> 160
+        y2 = int(y2_ori / max_y * (height - 1)) if max_y > 0 else 0  # 예: 200 -> 320
 
-        cv2.line(graph_img, (x1, height - y1), (x2, height - y2), (0, 165, 255), 2)
+        cv2.line(graph_img, (x1, height - y1), (x2, height - y2), (0, 165, 255), 2)  # 예: (213,320)-(426,160)에 주황색 선
 
-    for i in range(len(x_data)):
-        if orange_data[i] is None:
+    for i in range(len(x_data)):  # 각 데이터 포인트에 원과 값 표시
+        if orange_data[i] is None:  # None 값은 건너뜀
             continue
-        x_ori, y_ori = x_data[i], orange_data[i]
-        x_pt = int((x_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))
-        y_pt = int(y_ori / max_y * (height - 1)) if max_y > 0 else 0
-        cv2.circle(graph_img, (x_pt, height - y_pt), 4, (0, 165, 255), -1)
-        cv2.putText(
+        x_ori, y_ori = x_data[i], orange_data[i]  # 예: (1,100)
+        x_pt = int((x_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))  # 예: 1 -> 213
+        y_pt = int(y_ori / max_y * (height - 1)) if max_y > 0 else 0  # 예: 100 -> 160
+        cv2.circle(graph_img, (x_pt, height - y_pt), 4, (0, 165, 255), -1)  # 예: (213,320)에 주황색 원
+        cv2.putText(  # 값 텍스트 표시
             graph_img,
-            f"{y_ori}",
-            (x_pt + 5, height - y_pt - 5),
+            f"{y_ori}",  # 예: "100"
+            (x_pt + 5, height - y_pt - 5),  # 예: (218,315)
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
-            (0, 165, 255),
+            (0, 165, 255),  # 주황색
             1,
             cv2.LINE_AA
         )
 
-    cv2.line(graph_img, (0, height - 1), (width - 1, height - 1), (255, 255, 255), 1)
-    cv2.line(graph_img, (0, 0), (0, height - 1), (255, 255, 255), 1)
+    cv2.line(graph_img, (0, height - 1), (width - 1, height - 1), (255, 255, 255), 1)  # 예: x축 흰색 선
+    cv2.line(graph_img, (0, 0), (0, height - 1), (255, 255, 255), 1)  # 예: y축 흰색 선
 
-    cv2.putText(
+    cv2.putText(  # 그래프 제목 표시
         graph_img,
-        "Orange Pixel Count",
-        (10, 30),
+        "Orange Pixel Count",  # 제목 텍스트
+        (10, 30),  # 예: 좌상단 (10,30)
         cv2.FONT_HERSHEY_SIMPLEX,
         1.0,
-        (255, 255, 255),
+        (255, 255, 255),  # 흰색
         2,
         cv2.LINE_AA
     )
 
-    return graph_img
+    return graph_img  # 완성된 그래프 이미지 반환
 
 # ----------------------------------------------------------------------------------------
 # 13) Combined, Bounce Count 창을 생성 & Combined 창을 전체화면으로 시작
 # ----------------------------------------------------------------------------------------
-cv2.namedWindow("Combined", cv2.WINDOW_NORMAL)
-cv2.setWindowProperty("Combined", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-is_fullscreen_combined = True
+cv2.namedWindow("Combined", cv2.WINDOW_NORMAL)  # Combined 창 생성 (크기 조절 가능)
+cv2.setWindowProperty("Combined", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)  # Combined 창을 전체화면으로 설정
+is_fullscreen_combined = True  # Combined 창이 전체화면 모드인지 여부 (예: True)
 
-cv2.namedWindow("Bounce Count Window", cv2.WINDOW_NORMAL)
-cv2.setWindowProperty("Bounce Count Window", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-is_fullscreen_bounce = True
+cv2.namedWindow("Bounce Count Window", cv2.WINDOW_NORMAL)  # Bounce Count 창 생성 (크기 조절 가능) 
+cv2.setWindowProperty("Bounce Count Window", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)  # Bounce Count 창을 전체화면으로 설정
+is_fullscreen_bounce = True  # Bounce Count 창이 전체화면 모드인지 여부 (예: True)
 
-cv2.setMouseCallback("Combined", mouse_callback)
+cv2.setMouseCallback("Combined", mouse_callback)  # Combined 창에 마우스 이벤트 콜백 함수 설정
 
-prev_bounce_count = None
-bounce_img = None
-is_fullscreen = False
+prev_bounce_count = None  # 이전 바운스 카운트 값 (예: 3)
+bounce_img = None  # 바운스 카운트 표시용 이미지
+is_fullscreen = False  # 전체 화면 모드 여부 (예: False)
 
 # ----------------------------------------------------------------------------------------
 # 14) 추가된 전역 변수: 상태 관리
 # ----------------------------------------------------------------------------------------
-current_state = "waiting"
-state_display_text = "Waiting"
-state_font = cv2.FONT_HERSHEY_SIMPLEX
-state_font_scale = 1.0
-state_font_color = (255, 255, 255)
-state_font_thickness = 2
-state_change_time = None
+current_state = "waiting"  # 현재 상태 (예: "waiting", "tracking", "finished")
+state_display_text = "Waiting"  # 화면에 표시할 상태 텍스트 (예: "Waiting")
+state_font = cv2.FONT_HERSHEY_SIMPLEX  # 상태 텍스트 폰트
+state_font_scale = 1.0  # 상태 텍스트 크기 (예: 1.0)
+state_font_color = (255, 255, 255)  # 상태 텍스트 색상 (예: 흰색)
+state_font_thickness = 2  # 상태 텍스트 두께 (예: 2)
+state_change_time = None  # 상태가 마지막으로 변경된 시간 (예: 1234567890.123)
 
-stationary_start_time = None
-stationary_threshold = 2.0
-movement_threshold = 5
-last_position = None
+stationary_start_time = None  # 공이 정지 상태로 진입한 시작 시간 (예: 1234567890.123)
+stationary_threshold = 2.0  # 공이 정지했다고 판단할 시간 임계값 (초) (예: 2.0초)
+movement_threshold = 5  # 공의 움직임을 감지할 픽셀 거리 임계값 (예: 5픽셀)
+last_position = None  # 마지막으로 감지된 공의 위치 (예: (100, 200))
 
-previous_bounce_time = None
+previous_bounce_time = None  # 이전 바운스가 발생한 시간 (예: 1234567890.123)
 
 # ----------------------------------------------------------------------------------------
 # 14-1) 추가: 마지막 검출 시각(공이 마지막으로 발견된 시간)을 저장할 변수
@@ -518,161 +539,156 @@ bounce_history = []   # 최대 8개 정도만 저장해서 사각형에 표시
 # ----------------------------------------------------------------------------------------
 # 15) 메인 루프
 # ----------------------------------------------------------------------------------------
-prev_time = time.time()
-fps = 0.0
+prev_time = time.time()  # 이전 프레임의 시간을 저장 (FPS 계산을 위해 필요)
+fps = 0.0  # FPS 값을 저장할 변수 초기화 (화면에 FPS를 표시하기 위해 필요)
 
-while True:
-    now = time.time()
-    if now - last_mouse_move_time > 3.0:
-        if mouse_visible:
-            user32.ShowCursor(False)
-            mouse_visible = False
+while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
+    now = time.time()  # 현재 시간을 가져옴 (마우스 커서 숨김 기능을 위해 필요)
+    if now - last_mouse_move_time > 3.0:  # 마우스가 3초 이상 움직이지 않았는지 확인
+        if mouse_visible:  # 마우스가 보이는 상태라면
+            user32.ShowCursor(False)  # 마우스 커서를 숨김
+            mouse_visible = False  # 마우스 상태를 숨김으로 변경
 
-    ret, frame = cap.read()
-    if not ret:
-        print("No more frames or camera error.")
-        break
+    ret, frame = cap.read()  # 카메라/비디오에서 새 프레임을 읽어옴
+    if not ret:  # 프레임을 읽지 못했다면
+        print("No more frames or camera error.")  # 에러 메시지 출력
+        break  # 루프 종료
 
-    current_time = time.time()
-    time_diff = current_time - prev_time
-    if time_diff > 1e-9:
-        fps = 1.0 / time_diff
-    prev_time = current_time
+    current_time = time.time()  # 현재 시간을 가져옴 (FPS 계산을 위해 필요)
+    time_diff = current_time - prev_time  # 이전 프레임과의 시간 차이 계산
+    if time_diff > 1e-9:  # 0으로 나누기를 방지하기 위한 조건
+        fps = 1.0 / time_diff  # FPS 계산 (초당 프레임 수)
+    prev_time = current_time  # 다음 계산을 위해 현재 시간을 저장
 
-    results = model.predict(frame, imgsz=640, conf=0.5, max_det=1, show=False, device=0)
-    boxes = results[0].boxes
+    results = model.predict(frame, imgsz=640, conf=0.5, max_det=1, show=False, device=0)  # YOLO 모델로 공을 검출
+    boxes = results[0].boxes  # 검출된 객체의 바운딩 박스 정보를 가져옴
 
-    x_values.append(frame_count)
-    frame_count += 1
+    x_values.append(frame_count)  # 프레임 번호를 x축 값으로 저장 (그래프 표시용)
+    frame_count += 1  # 프레임 카운터 증가
 
-    detected = False
-    orange_pixels = 0
+    detected = False  # 공 검출 여부를 저장할 플래그 초기화
+    orange_pixels = 0  # 주황색 픽셀 수를 저장할 변수 초기화
 
     # ------------------------------------------------------------------------------------
     # 공 검출 여부 확인
     # ------------------------------------------------------------------------------------
-    if len(boxes) > 0:
-        x1, y1, x2, y2 = boxes[0].xyxy[0].cpu().numpy()
-        y_center = (y1 + y2) / 2.0
-        x_center = (x1 + x2) / 2.0  # 공의 x중심좌표
+    if len(boxes) > 0:  # 검출된 객체가 있다면
+        x1, y1, x2, y2 = boxes[0].xyxy[0].cpu().numpy()  # 첫 번째 객체의 바운딩 박스 좌표를 가져옴
+        y_center = (y1 + y2) / 2.0  # 바운딩 박스의 y축 중심점 계산
+        x_center = (x1 + x2) / 2.0  # 바운딩 박스의 x축 중심점 계산
 
-        x1i, y1i, x2i, y2i = map(int, [x1, y1, x2, y2])
-        x1i = max(0, x1i)
-        y1i = max(0, y1i)
-        x2i = min(frame.shape[1], x2i)
-        y2i = min(frame.shape[0], y2i)
+        x1i, y1i, x2i, y2i = map(int, [x1, y1, x2, y2])  # 좌표값을 정수로 변환 (픽셀 인덱싱을 위해)
+        x1i = max(0, x1i)  # x 좌표가 음수가 되지 않도록 보정
+        y1i = max(0, y1i)  # y 좌표가 음수가 되지 않도록 보정
+        x2i = min(frame.shape[1], x2i)  # x 좌표가 프레임 너비를 넘지 않도록 보정
+        y2i = min(frame.shape[0], y2i)  # y 좌표가 프레임 높이를 넘지 않도록 보정
 
-        roi = frame[y1i:y2i, x1i:x2i]
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        lower_orange = np.array([10, 100, 100], dtype=np.uint8)
-        upper_orange = np.array([25, 255, 255], dtype=np.uint8)
-        mask_orange = cv2.inRange(hsv, lower_orange, upper_orange)
-        orange_pixels = cv2.countNonZero(mask_orange)
+        roi = frame[y1i:y2i, x1i:x2i]  # 바운딩 박스 영역을 추출
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)  # RGB를 HSV 색공간으로 변환 (색상 검출을 위해)
+        lower_orange = np.array([10, 100, 100], dtype=np.uint8)  # 주황색의 하한값 설정
+        upper_orange = np.array([25, 255, 255], dtype=np.uint8)  # 주황색의 상한값 설정
+        mask_orange = cv2.inRange(hsv, lower_orange, upper_orange)  # 주황색 영역을 마스크로 추출
+        orange_pixels = cv2.countNonZero(mask_orange)  # 주황색 픽셀의 개수를 계산
 
-        if ignore_zero_orange:
-            if orange_pixels >= 5:
-                detected = True
-        else:
-            detected = True
+        if ignore_zero_orange:                            # 주황색 픽셀 무시 옵션이 켜져있는 경우
+            if orange_pixels >= 5:                        # 주황색 픽셀이 5개 이상이면 (예: 작은 공이라도 최소 5픽셀은 있어야 함)
+                detected = True                           # 공이 검출되었다고 판단
+        else:                                            # 주황색 픽셀 무시 옵션이 꺼져있는 경우
+            detected = True                              # YOLO가 검출한 것을 그대로 신뢰
 
-        if detected:
-            last_detection_time = time.time()
+        if detected:                                     # 공이 검출된 경우
+            last_detection_time = time.time()            # 마지막 검출 시간을 현재 시간으로 업데이트 (예: 공이 사라졌다가 다시 나타나는 것을 추적하기 위해)
 
-            y_values.append(y_center)
-            orange_pixel_values.append(orange_pixels)
+            y_values.append(y_center)                    # 공의 y좌표를 기록 (예: 그래프 그리기 위해)
+            orange_pixel_values.append(orange_pixels)    # 주황색 픽셀 수를 기록 (예: 공의 크기 변화를 추적하기 위해)
 
             # --------------------------------------------------------------------------
             # 상태 전환(ready / tracking) 확인
             # --------------------------------------------------------------------------
-            if last_position is not None:
-                dy = y_center - last_position
-                movement = abs(dy)
-            else:
-                movement = 0
+            if last_position is not None:                # 이전 위치 정보가 있는 경우
+                dy = y_center - last_position            # 이전 위치와의 y축 변화량 계산 (예: y=100에서 y=120으로 이동했다면 dy=20)
+                movement = abs(dy)                       # 변화량의 절대값 계산 (예: 위로 이동하든 아래로 이동하든 움직임의 크기만 필요)
+            else:                                        # 이전 위치 정보가 없는 경우 (첫 프레임)
+                movement = 0                             # 움직임을 0으로 설정
 
-            if current_state == "ready":
-                if movement > movement_threshold:
-                    current_state = "tracking"
-                    bounce_count = 0
-                    bounce_points = []
-                    bounce_times = []
-                    previous_bounce_time = None
-                    print("State changed to TRACKING")
+            if current_state == "ready":                 # 현재 준비 상태인 경우
+                if movement > movement_threshold:        # 움직임이 임계값보다 큰 경우 (예: 10픽셀 이상 움직였다면)
+                    current_state = "tracking"           # 상태를 추적 모드로 변경
+                    bounce_count = 0                     # 바운스 카운트 초기화
+                    bounce_points = []                   # 바운스 발생 지점 목록 초기화
+                    bounce_times = []                    # 바운스 발생 시간 목록 초기화
+                    previous_bounce_time = None          # 이전 바운스 시간 초기화
+                    print("State changed to TRACKING")   # 상태 변경 로그 출력
 
-            if movement > movement_threshold:
-                if stationary_start_time is not None:
-                    stationary_start_time = None
-            else:
-                if stationary_start_time is None:
-                    stationary_start_time = time.time()
-                elif (time.time() - stationary_start_time) >= stationary_threshold:
-                    # 공이 2초 이상 멈췄을 때
-                    if in_rect_time >= 2.0 and current_state != "ready":
-                        # 빨간 사각형 안에 공이 2초 이상 => ready
-                        current_state = "ready"
-                        state_change_time = time.time()
-                        print("State changed to READY")
+            if movement > movement_threshold:            # 움직임이 임계값보다 큰 경우 (예: 공이 활발히 움직이는 중)
+                if stationary_start_time is not None:    # 정지 시작 시간이 기록되어 있다면
+                    stationary_start_time = None         # 정지 시작 시간을 초기화 (공이 다시 움직이기 시작했으므로)
+            else:                                        # 움직임이 임계값보다 작은 경우 (예: 공이 거의 정지 상태)
+                if stationary_start_time is None:        # 정지 시작 시간이 기록되어 있지 않다면
+                    stationary_start_time = time.time()  # 현재 시간을 정지 시작 시간으로 기록
+                elif (time.time() - stationary_start_time) >= stationary_threshold:  # 정지 상태가 임계 시간을 넘어선 경우 (예: 2초 이상 정지)
+                    if in_rect_time >= 2.0 and current_state != "ready":            # 빨간 사각형 안에 2초 이상 있고, waiting 상태인경우(ready 상태가 아닌 경우)
+                        current_state = "ready"          # 상태를 준비 상태로 변경
+                        state_change_time = time.time()  # 상태 변경 시간 기록
+                        print("State changed to READY")  # 상태 변경 로그 출력
 
-            last_position = y_center
+            last_position = y_center                     # 현재 위치를 다음 프레임의 이전 위치로 저장
 
             # --------------------------------------------------------------------------
             # 바운스 카운트 로직
             # --------------------------------------------------------------------------
-            if current_state == "tracking":
-                if last_y is not None:
-                    dy_tracking = y_center - last_y
-                    if abs(dy_tracking) > PIXEL_THRESHOLD:
-                        if dy_tracking > 0:
-                            consecutiveDownCount += 1
-                            consecutiveUpCount = 0
-                        else:
-                            consecutiveUpCount += 1
-                            consecutiveDownCount = 0
+            if current_state == "tracking":                                    # 현재 상태가 추적 모드인 경우 (예: 공이 움직이기 시작한 후)
+                if last_y is not None:                                        # 이전 y좌표가 있는 경우 (예: 두 번째 프레임부터)
+                    dy_tracking = y_center - last_y                           # 현재 y좌표와 이전 y좌표의 차이 계산 (예: y=100에서 y=120으로 이동했다면 dy_tracking=20)
+                    if abs(dy_tracking) > PIXEL_THRESHOLD:                    # y좌표 변화량이 임계값보다 큰 경우 (예: 5픽셀 이상 움직였을 때)
+                        if dy_tracking > 0:                                   # 아래로 움직이는 경우 (예: dy_tracking이 양수)
+                            consecutiveDownCount += 1                         # 연속 하강 카운트 증가 (예: 3프레임 연속 하강하면 consecutiveDownCount=3)
+                            consecutiveUpCount = 0                            # 연속 상승 카운트 초기화
+                        else:                                                 # 위로 움직이는 경우 (예: dy_tracking이 음수)
+                            consecutiveUpCount += 1                           # 연속 상승 카운트 증가 (예: 3프레임 연속 상승하면 consecutiveUpCount=3)
+                            consecutiveDownCount = 0                          # 연속 하강 카운트 초기화
 
-                        if state is None:
-                            if consecutiveDownCount >= DOWN_THRESHOLD:
-                                state = "down"
-                        elif state == "down":
-                            if consecutiveUpCount >= UP_THRESHOLD:
-                                bounce_count += 1
-                                print("Bounce detected!")
-                                if sound_enabled:
-                                    sound.play()
+                        if state is None:                                     # 초기 상태인 경우 (예: 처음 공을 감지했을 때)
+                            if consecutiveDownCount >= DOWN_THRESHOLD:        # 연속 하강 횟수가 임계값 이상인 경우 (예: 2프레임 이상 연속 하강)
+                                state = "down"                               # 상태를 하강으로 변경
+                        elif state == "down":                                # 현재 하강 상태인 경우
+                            if consecutiveUpCount >= UP_THRESHOLD:           # 연속 상승 횟수가 임계값 이상인 경우 (예: 1프레임 이상 연속 상승)
+                                bounce_count += 1                            # 바운스 횟수 증가 (예: 첫 번째 바운스면 1, 두 번째 바운스면 2)
+                                print("Bounce detected!")                    # 바운스 감지 메시지 출력
+                                if sound_enabled:                            # 소리 재생이 활성화된 경우
+                                    sound.play()                            # 바운스 소리 재생
 
-                                bounce_points.append((x_values[-1], y_values[-1]))
-                                current_bounce_time = time.time()
-                                bounce_times.append(current_bounce_time)
+                                bounce_points.append((x_values[-1], y_values[-1]))  # 바운스 발생 위치 저장 (예: x=100, y=200에서 바운스)
+                                current_bounce_time = time.time()                   # 현재 바운스 시간 기록
+                                bounce_times.append(current_bounce_time)            # 바운스 시간 목록에 추가
 
-                                if previous_bounce_time is not None:
-                                    td = current_bounce_time - previous_bounce_time
+                                if previous_bounce_time is not None:                # 이전 바운스 시간이 있는 경우 (예: 두 번째 이상의 바운스)
+                                    td = current_bounce_time - previous_bounce_time # 이전 바운스와의 시간 차이 계산 (예: 1.5초 후 다시 바운스)
                                     print(f"Time diff between last two bounces: {td:.2f} s")
                                     bounce_time_diff = td
-                                    # (추가) 만약 td > 1.0 이면 상태를 waiting으로 돌리고 싶다면 여기서 처리
-                                    if td > 1.0:
-                                        # waiting으로 전환하기 전에 bounce_history에 기록
-                                        bounce_history.append(bounce_count)
-                                        if len(bounce_history) > 8:
-                                            bounce_history.pop(0)
+                                    if td > 1.0:                                   # 바운스 간격이 1초 이상인 경우 (예: 공이 멈춘 것으로 판단)
+                                        bounce_history.append(bounce_count)        # 바운스 기록에 현재까지의 바운스 횟수 저장
+                                        if len(bounce_history) > 8:               # 바운스 기록이 8개를 초과하는 경우
+                                            bounce_history.pop(0)                 # 가장 오래된 기록 삭제
 
-                                        current_state = "waiting"
-                                        # bounce_count도 0으로 리셋
-                                        bounce_count = 0
-                                        bounce_points = []
-                                        bounce_times = []
-                                        previous_bounce_time = None
+                                        current_state = "waiting"                 # 상태를 대기 상태로 변경
+                                        bounce_count = 0                         # 바운스 카운트 초기화
+                                        bounce_points = []                       # 바운스 위치 목록 초기화
+                                        bounce_times = []                        # 바운스 시간 목록 초기화
+                                        previous_bounce_time = None              # 이전 바운스 시간 초기화
                                         print("State changed to WAITING (timeout)")
-                                previous_bounce_time = current_bounce_time
+                                previous_bounce_time = current_bounce_time       # 현재 바운스 시간을 이전 바운스 시간으로 저장
 
-                                state = "up"
-                                consecutiveDownCount = 0
-                                consecutiveUpCount = 0
-                        elif state == "up":
-                            if consecutiveDownCount >= DOWN_THRESHOLD:
-                                state = "down"
-                                consecutiveUpCount = 0
-                                consecutiveDownCount = 0
+                                state = "up"                                    # 상태를 상승으로 변경 (예: 바운스 후 공이 올라가는 상태)
+                                consecutiveDownCount = 0                        # 연속 하강 카운트 초기화
+                                consecutiveUpCount = 0                          # 연속 상승 카운트 초기화
+                        elif state == "up":                                     # 현재 상승 상태인 경우
+                            if consecutiveDownCount >= DOWN_THRESHOLD:          # 연속 하강 횟수가 임계값 이상인 경우 (예: 2프레임 이상 연속 하강)
+                                state = "down"                                 # 상태를 하강으로 변경
+                                consecutiveUpCount = 0                         # 연속 상승 카운트 초기화
+                                consecutiveDownCount = 0                       # 연속 하강 카운트 초기화
 
-                last_y = y_center
+                last_y = y_center                                              # 현재 y좌표를 다음 프레임의 이전 y좌표로 저장
 
             # --------------------------------------------------------------------------
             # 디버그용 사각형 & 텍스트
