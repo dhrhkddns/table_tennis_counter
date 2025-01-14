@@ -247,100 +247,99 @@ def mouse_callback(event, x, y, flags, param):
             new_y = max(0, min(new_y, 480 - drag_rect_h))              # y 좌표가 화면을 벗어나지 않도록 제한
             drag_rect_x, drag_rect_y = new_x, new_y                    # 계산된 새로운 위치 적용
 
-    elif event == cv2.EVENT_LBUTTONDOWN:
+    elif event == cv2.EVENT_LBUTTONDOWN:                                # 마우스 왼쪽 버튼을 눌렀을 때
         # 사운드 ON/OFF 버튼
-        if (button_rect[0] <= x - 640 <= button_rect[0] + button_rect[2] and
-            button_rect[1] <= y <= button_rect[1] + button_rect[3]):
-            sound_enabled = not sound_enabled
-            print(f"Sound Enabled: {sound_enabled}")
+        if (button_rect[0] <= x - 640 <= button_rect[0] + button_rect[2] and    # 예: 500 <= x-640 <= 620 (버튼 x범위 체크)
+            button_rect[1] <= y <= button_rect[1] + button_rect[3]):            # 예: 20 <= y <= 60 (버튼 y범위 체크)
+            sound_enabled = not sound_enabled                           # 소리 설정을 반전 (예: True -> False)
+            print(f"Sound Enabled: {sound_enabled}")                   # 현재 소리 설정 상태 출력 (예: "Sound Enabled: False")
         
         # Ignore Zero Orange 버튼
-        elif (button_rect_ignore[0] <= x - 640 <= button_rect_ignore[0] + button_rect_ignore[2] and
-              button_rect_ignore[1] <= y <= button_rect_ignore[1] + button_rect_ignore[3]):
-            ignore_zero_orange = not ignore_zero_orange
-            print(f"Ignore Zero Orange Pixels: {ignore_zero_orange}")
+        elif (button_rect_ignore[0] <= x - 640 <= button_rect_ignore[0] + button_rect_ignore[2] and    # 예: 500 <= x-640 <= 620 (무시 버튼 x범위)
+              button_rect_ignore[1] <= y <= button_rect_ignore[1] + button_rect_ignore[3]):            # 예: 70 <= y <= 110 (무시 버튼 y범위)
+            ignore_zero_orange = not ignore_zero_orange                # 오렌지픽셀 무시 설정 반전 (예: False -> True)
+            print(f"Ignore Zero Orange Pixels: {ignore_zero_orange}")  # 현재 무시 설정 상태 출력 (예: "Ignore Zero Orange Pixels: True")
         
         else:
-            corners = {
-                'tl': (drag_rect_x, drag_rect_y),
-                'tr': (drag_rect_x + drag_rect_w, drag_rect_y),
-                'bl': (drag_rect_x, drag_rect_y + drag_rect_h),
-                'br': (drag_rect_x + drag_rect_w, drag_rect_y + drag_rect_h)
+            corners = {                                               # 사각형의 4개 모서리 좌표 저장
+                'tl': (drag_rect_x, drag_rect_y),                    # 예: 좌상단 (100, 100)
+                'tr': (drag_rect_x + drag_rect_w, drag_rect_y),      # 예: 우상단 (200, 100)
+                'bl': (drag_rect_x, drag_rect_y + drag_rect_h),      # 예: 좌하단 (100, 200)
+                'br': (drag_rect_x + drag_rect_w, drag_rect_y + drag_rect_h)  # 예: 우하단 (200, 200)
             }
-            corner_clicked = None
-            for ckey, cpos in corners.items():
-                cx, cy = cpos
-                if (cx - corner_size <= x <= cx + corner_size and 
-                    cy - corner_size <= y <= cy + corner_size):
-                    corner_clicked = ckey
+            corner_clicked = None                                     # 클릭된 모서리 초기화
+            for ckey, cpos in corners.items():                       # 각 모서리 확인
+                cx, cy = cpos                                        # 예: cx=100, cy=100 (좌상단)
+                if (cx - corner_size <= x <= cx + corner_size and    # 예: 95 <= x <= 105 (모서리 x범위)
+                    cy - corner_size <= y <= cy + corner_size):      # 예: 95 <= y <= 105 (모서리 y범위)
+                    corner_clicked = ckey                            # 클릭된 모서리 저장 (예: 'tl')
                     break
 
-            if corner_clicked:
-                resizing_corner = corner_clicked
+            if corner_clicked:                                       # 모서리가 클릭되었다면
+                resizing_corner = corner_clicked                     # 크기 조절할 모서리 설정 (예: resizing_corner = 'tl')
             else:
                 # 사각형 내부라면 드래그(이동) 시작
-                if (drag_rect_x <= x < drag_rect_x + drag_rect_w and
-                    drag_rect_y <= y < drag_rect_y + drag_rect_h):
-                    dragging = True
-                    drag_offset_x = x - drag_rect_x
-                    drag_offset_y = y - drag_rect_y
+                if (drag_rect_x <= x < drag_rect_x + drag_rect_w and     # 예: 100 <= x < 200 (사각형 x범위)
+                    drag_rect_y <= y < drag_rect_y + drag_rect_h):       # 예: 100 <= y < 200 (사각형 y범위)
+                    dragging = True                                       # 드래그 시작
+                    drag_offset_x = x - drag_rect_x                      # 드래그 시작점과 사각형 좌상단의 x차이 (예: 150-100=50)
+                    drag_offset_y = y - drag_rect_y                      # 드래그 시작점과 사각형 좌상단의 y차이 (예: 150-100=50)
 
-    elif event == cv2.EVENT_LBUTTONUP:
-        dragging = False
-        resizing_corner = None
+    elif event == cv2.EVENT_LBUTTONUP:                              # 마우스 왼쪽 버튼을 뗐을 때
+        dragging = False                                            # 드래그 종료
+        resizing_corner = None                                      # 크기 조절 모서리 초기화
 
     # (A) 우클릭 시 해당 쿼드런트만 확대 or 복귀
-    elif event == cv2.EVENT_RBUTTONDOWN:
-        if enlarged_view is None:
+    elif event == cv2.EVENT_RBUTTONDOWN:                           # 마우스 오른쪽 버튼을 눌렀을 때
+        if enlarged_view is None:                                  # 현재 확대된 화면이 없다면
             # 4개 쿼드런트 범위:
-            # top-left:    y in [0,480), x in [0,640)
-            # top-right:   y in [0,480), x in [640,1280)
-            # bottom-left: y in [480,960), x in [0,640)
-            # bottom-right:y in [480,960), x in [640,1280)
+            # top-left:    y in [0,480), x in [0,640)             # 예: (300,200)은 top-left
+            # top-right:   y in [0,480), x in [640,1280)          # 예: (800,200)은 top-right
+            # bottom-left: y in [480,960), x in [0,640)           # 예: (300,600)은 bottom-left
+            # bottom-right:y in [480,960), x in [640,1280)        # 예: (800,600)은 bottom-right
 
-            if 0 <= y < 480 and 0 <= x < 640:
-                enlarged_view = 'tl'
-            elif 0 <= y < 480 and 640 <= x < 1280:
-                enlarged_view = 'tr'
-            elif 480 <= y < 960 and 0 <= x < 640:
-                enlarged_view = 'bl'
-            elif 480 <= y < 960 and 640 <= x < 1280:
-                enlarged_view = 'br'
+            if 0 <= y < 480 and 0 <= x < 640:                     # 좌상단 영역 클릭 시
+                enlarged_view = 'tl'                               # 좌상단 확대 모드로 설정
+            elif 0 <= y < 480 and 640 <= x < 1280:                # 우상단 영역 클릭 시
+                enlarged_view = 'tr'                               # 우상단 확대 모드로 설정
+            elif 480 <= y < 960 and 0 <= x < 640:                 # 좌하단 영역 클릭 시
+                enlarged_view = 'bl'                               # 좌하단 확대 모드로 설정
+            elif 480 <= y < 960 and 640 <= x < 1280:              # 우하단 영역 클릭 시
+                enlarged_view = 'br'                               # 우하단 확대 모드로 설정
 
-            if enlarged_view is not None:
-                print(f"Enlarged => {enlarged_view}")
+            if enlarged_view is not None:                         # 확대 모드가 설정되었다면
+                print(f"Enlarged => {enlarged_view}")             # 예: "Enlarged => tl" 출력
 
-        else:
-            # 이미 확대된 상태라면 다시 None으로 (4분할)
-            print(f"Return to 4-split from: {enlarged_view}")
-            enlarged_view = None
+        else:                                                     # 이미 확대된 상태라면
+            print(f"Return to 4-split from: {enlarged_view}")     # 예: "Return to 4-split from: tl" 출력
+            enlarged_view = None                                  # 확대 모드 해제
 
 
 # ----------------------------------------------------------------------------------------
 # 10) render_text_with_ttf()
 # ----------------------------------------------------------------------------------------
-def render_text_with_ttf(
-    text,
-    font=font,
-    text_color=(255, 255, 255),
-    bg_color=(0, 0, 0),
-    width=960,
-    height=540
+def render_text_with_ttf(                                        # TTF 폰트로 텍스트를 렌더링하는 함수
+    text,                                                        # 예: "123"
+    font=font,                                                   # 예: ImageFont.truetype("Digital Display.ttf", 400)
+    text_color=(255, 255, 255),                                 # 예: 흰색 (255,255,255)
+    bg_color=(0, 0, 0),                                         # 예: 검은색 (0,0,0)
+    width=960,                                                  # 예: 이미지 너비 960픽셀
+    height=540                                                  # 예: 이미지 높이 540픽셀
 ):
-    img_pil = Image.new("RGB", (width, height), bg_color)
-    draw = ImageDraw.Draw(img_pil)
+    img_pil = Image.new("RGB", (width, height), bg_color)       # 예: 960x540 크기의 검은색 배경 이미지 생성
+    draw = ImageDraw.Draw(img_pil)                              # 이미지에 그리기 위한 Draw 객체 생성
 
-    text_bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = text_bbox[2] - text_bbox[0]
-    text_h = text_bbox[3] - text_bbox[1]
+    text_bbox = draw.textbbox((0, 0), text, font=font)          # 텍스트의 경계 상자 계산 (예: (10,10,200,100))
+    text_w = text_bbox[2] - text_bbox[0]                        # 텍스트 너비 계산 (예: 190)
+    text_h = text_bbox[3] - text_bbox[1]                        # 텍스트 높이 계산 (예: 90)
 
-    text_x = (width - text_w) // 2
-    text_y = (height - text_h) // 2
-    draw.text((text_x, text_y), text, font=font, fill=text_color)
+    text_x = (width - text_w) // 2                              # 텍스트 x 중앙 위치 계산 (예: 385)
+    text_y = (height - text_h) // 2                             # 텍스트 y 중앙 위치 계산 (예: 225)
+    draw.text((text_x, text_y), text, font=font, fill=text_color)  # 텍스트 그리기
 
-    img_np = np.array(img_pil)
-    img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-    return img_bgr
+    img_np = np.array(img_pil)                                  # PIL 이미지를 numpy 배열로 변환
+    img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)          # RGB를 BGR로 변환
+    return img_bgr                                              # BGR 이미지 반환
 
 # ----------------------------------------------------------------------------------------
 # 11) y좌표 그래프 그리기 함수
@@ -639,7 +638,7 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
             # --------------------------------------------------------------------------
             if current_state == "tracking":                                    # 현재 상태가 추적 모드인 경우 (예: 공이 움직이기 시작한 후)
                 if last_y is not None:                                        # 이전 y좌표가 있는 경우 (예: 두 번째 프레임부터)
-                    dy_tracking = y_center - last_y                           # 현재 y좌표와 이전 y좌표의 차이 계산 (예: y=100에서 y=120으로 이동했다면 dy_tracking=20)
+                    dy_tracking = y_center - last_y                           # 현재 y좌표와 이전 y좌표의 차이 계산 (예: y=100에서 y=120으로 이동했다면 dy_tracking=20) opencv에서 밑으로 갈수록 y증가, 위로 갈수록 y감소
                     if abs(dy_tracking) > PIXEL_THRESHOLD:                    # y좌표 변화량이 임계값보다 큰 경우 (예: 5픽셀 이상 움직였을 때)
                         if dy_tracking > 0:                                   # 아래로 움직이는 경우 (예: dy_tracking이 양수)
                             consecutiveDownCount += 1                         # 연속 하강 카운트 증가 (예: 3프레임 연속 하강하면 consecutiveDownCount=3)
@@ -693,88 +692,88 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
             # --------------------------------------------------------------------------
             # 디버그용 사각형 & 텍스트
             # --------------------------------------------------------------------------
-            cv2.rectangle(frame, (x1i, y1i), (x2i, y2i), (0, 255, 0), 2)
+            cv2.rectangle(frame, (x1i, y1i), (x2i, y2i), (0, 255, 0), 2)                    # 공 주변에 초록색 사각형 그리기 (예: (100,200)에서 (150,250)까지 두께 2로 그림)
             cv2.putText(
-                frame,
-                f"y_center={int(y_center)}",
-                (x1i, y1i - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA
+                frame,                                                                       # 텍스트를 그릴 프레임
+                f"y_center={int(y_center)}",                                                # y좌표 값 표시 (예: "y_center=200")
+                (x1i, y1i - 10),                                                            # 텍스트 위치 - 사각형 위 10픽셀 (예: (100,190))
+                cv2.FONT_HERSHEY_SIMPLEX,                                                   # 폰트 종류 - 심플렉스 폰트
+                0.7,                                                                        # 폰트 크기 - 0.7배
+                (0, 255, 0),                                                               # 텍스트 색상 - 초록색
+                2,                                                                         # 텍스트 두께 - 2픽셀
+                cv2.LINE_AA                                                                # 선 종류 - 부드러운 선
             )
             cv2.putText(
-                frame,
-                f"Orange px: {orange_pixels}",
-                (x1i, y2i + 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 165, 255),
-                2,
-                cv2.LINE_AA
+                frame,                                                                     # 텍스트를 그릴 프레임
+                f"Orange px: {orange_pixels}",                                            # 오렌지색 픽셀 수 표시 (예: "Orange px: 150")
+                (x1i, y2i + 25),                                                          # 텍스트 위치 - 사각형 아래 25픽셀 (예: (100,275))
+                cv2.FONT_HERSHEY_SIMPLEX,                                                 # 폰트 종류 - 심플렉스 폰트
+                0.7,                                                                      # 폰트 크기 - 0.7배
+                (0, 165, 255),                                                           # 텍스트 색상 - 주황색
+                2,                                                                       # 텍스트 두께 - 2픽셀
+                cv2.LINE_AA                                                              # 선 종류 - 부드러운 선
             )
         else:
-            y_values.append(None)
-            orange_pixel_values.append(None)
+            y_values.append(None)                                                        #(공이 화면에 있는데 오렌지 픽셀 필터링 때문에) 공이 감지되지 않으면 y좌표에 None 추가 (예: y_values=[200, None, 195])
+            orange_pixel_values.append(None)                                            # (공이 화면에 있는데 오렌지 픽셀 필터링 때문에) 공이 감지되지 않으면 오렌지픽셀 수에 None 추가 (예: orange_pixel_values=[150, None, 148])
     else:
-        y_values.append(None)
-        orange_pixel_values.append(None)
+        y_values.append(None)                                                          #(실제로 공이 화면에 없어서) 공이 감지되지 않으면 y좌표에 None 추가 (예: y_values=[200, None, 195])
+        orange_pixel_values.append(None)                                              #(실제로 공이 화면에 없어서) 공이 감지되지 않으면 오렌지픽셀 수에 None 추가 (예: orange_pixel_values=[150, None, 148])
 
     # -------------------------------------------------------------------------
     # (1) 공이 사각형 안에 있는 동안 => in_rect_time = 현재시간 - 진입시점
     # (2) 공이 나가면 => in_rect_time = 0
     # -------------------------------------------------------------------------
-    if len(boxes) > 0 and detected:
+    if len(boxes) > 0 and detected:                                                # 공이 감지되었는지 확인 (예: boxes=[array([100,200,150,250])])
         # 공 중심좌표 (x_center, y_center)가 사각형 내부인지 확인
-        if (drag_rect_x <= x_center < drag_rect_x + drag_rect_w and
-            drag_rect_y <= y_center < drag_rect_y + drag_rect_h):
-            if ball_in_rect_start is None:
-                ball_in_rect_start = time.time()
-            in_rect_time = time.time() - ball_in_rect_start
-        else:
-            in_rect_time = 0.0
-            ball_in_rect_start = None
-    else:
-        in_rect_time = 0.0
-        ball_in_rect_start = None
+        if (drag_rect_x <= x_center < drag_rect_x + drag_rect_w and              # x좌표가 사각형 내부인지 확인 (예: 100 <= 120 < 100+200)
+            drag_rect_y <= y_center < drag_rect_y + drag_rect_h):                # y좌표가 사각형 내부인지 확인 (예: 200 <= 220 < 200+150)
+            if ball_in_rect_start is None:                                       # 공이 처음 사각형에 들어온 경우 (예: ball_in_rect_start=None)
+                ball_in_rect_start = time.time()                                 # 진입 시점 기록 (예: ball_in_rect_start=1234567.89)
+            in_rect_time = time.time() - ball_in_rect_start                     # 사각형 내 체류 시간 계산 (예: in_rect_time=1.23)
+        else:                                                                    # 공이 사각형 밖에 있는 경우
+            in_rect_time = 0.0                                                  # 체류 시간 초기화 (예: in_rect_time=0.0)
+            ball_in_rect_start = None                                           # 진입 시점 초기화 (예: ball_in_rect_start=None)
+    else:                                                                       # 공이 감지되지 않은 경우
+        in_rect_time = 0.0                                                     # 체류 시간 초기화 (예: in_rect_time=0.0)
+        ball_in_rect_start = None                                              # 진입 시점 초기화 (예: ball_in_rect_start=None)
 
     # -------------------------------------------------------------------------
     # state==ready 인 상태에서 공이 안보이는(=detected=False) 1초 경과 시 waiting으로
     # -------------------------------------------------------------------------
-    if current_state == "ready":
-        if last_detection_time is not None and (time.time() - last_detection_time) > 1.0:
-            current_state = "waiting"
-            print("State changed to WAITING (no detection for 1s in READY)")
+    if current_state == "ready":                                                                # 현재 상태가 "ready"인지 확인 (예: current_state="ready")
+        if last_detection_time is not None and (time.time() - last_detection_time) > 1.0:      # 마지막 감지 시간이 존재하고 1초 이상 지났는지 확인 (예: last_detection_time=1234567.89, time.time()=1234569.0)
+            current_state = "waiting"                                                           # 상태를 "waiting"으로 변경 (예: current_state="waiting")
+            print("State changed to WAITING (no detection for 1s in READY)")                   # 상태 변경 메시지 출력 (예: "State changed to WAITING (no detection for 1s in READY)")
 
     # -------------------------------------------------------------------------
     # "TRACKING" → "WAITING" 조건(1): 마지막 검출 이후 1초 이상 감지 X
     # -------------------------------------------------------------------------
-    if current_state == "tracking":
-        if last_detection_time is not None and (time.time() - last_detection_time) >= 1.0:
-            bounce_history.append(bounce_count)
-            if len(bounce_history) > 8:
-                bounce_history.pop(0)
+    if current_state == "tracking":                                                                # 현재 상태가 "tracking"인지 확인 (예: current_state="tracking")
+        if last_detection_time is not None and (time.time() - last_detection_time) >= 1.0:        # 마지막 감지 시간이 존재하고 1초 이상 지났는지 확인 (예: last_detection_time=1234567.89, time.time()=1234569.0)
+            bounce_history.append(bounce_count)                                                    # 현재 바운스 카운트를 기록에 추가 (예: bounce_history=[5,7,3] -> [5,7,3,4])
+            if len(bounce_history) > 8:                                                           # 바운스 기록이 8개를 초과하는지 확인 (예: len(bounce_history)=9)
+                bounce_history.pop(0)                                                             # 가장 오래된 바운스 기록 제거 (예: bounce_history=[5,7,3,4] -> [7,3,4])
 
-            bounce_count = 0
-            consecutiveDownCount = 0
-            consecutiveUpCount = 0
-            state = None
-            current_state = "waiting"
-            print("No detection for 1 second in TRACKING => bounce_count reset to 0, state changed to WAITING")
+            bounce_count = 0                                                                      # 바운스 카운트 초기화 (예: bounce_count=4 -> bounce_count=0)
+            consecutiveDownCount = 0                                                              # 연속 하강 카운트 초기화 (예: consecutiveDownCount=2 -> consecutiveDownCount=0)
+            consecutiveUpCount = 0                                                                # 연속 상승 카운트 초기화 (예: consecutiveUpCount=1 -> consecutiveUpCount=0)
+            state = None                                                                          # 공의 이동 상태 초기화 (예: state="down" -> state=None)
+            current_state = "waiting"                                                             # 현재 상태를 "waiting"으로 변경 (예: current_state="tracking" -> current_state="waiting")
+            print("No detection for 1 second in TRACKING => bounce_count reset to 0, state changed to WAITING")  # 상태 변경 메시지 출력
 
     # 그래프 데이터 길이 제한
-    if len(x_values) > MAX_POINTS:
-        x_values.pop(0)
-        y_values.pop(0)
-        orange_pixel_values.pop(0)
+    if len(x_values) > MAX_POINTS:                                                # x좌표 리스트가 최대 길이를 초과하는지 확인 (예: len(x_values)=101 > MAX_POINTS=100)
+        x_values.pop(0)                                                          # x좌표 리스트의 첫 번째 요소 제거 (예: x_values=[100,105,110] -> [105,110])
+        y_values.pop(0)                                                          # y좌표 리스트의 첫 번째 요소 제거 (예: y_values=[200,195,190] -> [195,190])
+        orange_pixel_values.pop(0)                                              # 오렌지픽셀 수 리스트의 첫 번째 요소 제거 (예: orange_pixel_values=[150,148,152] -> [148,152])
 
     # 바운스 연속 감지 제한 (Optional)
-    if last_bounce_time is not None:
-        if time.time() - last_bounce_time > CONTINUOUS_TIMEOUT:
-            bounce_count = 0
-            last_bounce_time = None
-            print("No bounce for a while -> reset bounce_count to 0")
+    if last_bounce_time is not None:                                                # 마지막 바운스 시간이 존재하는지 확인 (예: last_bounce_time=1234567.89)
+        if time.time() - last_bounce_time > CONTINUOUS_TIMEOUT:                     # 마지막 바운스로부터 1초 이상 지났는지 확인 (예: time.time()=1234569.0, last_bounce_time=1234567.89)
+            bounce_count = 0                                                        # 바운스 카운트 초기화 (예: bounce_count=5 -> bounce_count=0)
+            last_bounce_time = None                                                 # 마지막 바운스 시간 초기화 (예: last_bounce_time=1234567.89 -> None)
+            print("No bounce for a while -> reset bounce_count to 0")              # 초기화 메시지 출력
 
     # ------------------------------------------------------------------------------------
     # (B) Combined 화면 만들기
