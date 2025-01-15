@@ -12,7 +12,7 @@ user32 = ctypes.windll.user32
 # 1) pygame 오디오 초기화 및 사운드 로드
 # ----------------------------------------------------------------------------------------
 pygame.mixer.init()
-sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\retro-coin-4-236671.mp3")
+bounce_count_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\retro-coin-4-236671.mp3")
 
 # ----------------------------------------------------------------------------------------
 # 2) YOLO 모델 로드
@@ -23,10 +23,14 @@ model.to("cuda")
 # ----------------------------------------------------------------------------------------
 # 3) 카메라 디바이스 연결
 # ----------------------------------------------------------------------------------------
-cap = cv2.VideoCapture(1)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-cap.set(cv2.CAP_PROP_FPS, 35)
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+#기본 값 YUV2 보단 MJPEG이 더 압축률이 높아서 이미지 전송 속도가 빨라짐.
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+
+# 함부로 설정하면 FPS 수백대 에서 30으로 떨어짐. 
+# cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+# cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+# cap.set(cv2.CAP_PROP_FPS, 35)
 
 # ----------------------------------------------------------------------------------------
 # 4) 그래프, 바운스 관련 전역 변수 정의
@@ -51,7 +55,7 @@ bounce_points = []              # 바운스가 발생한 지점의 좌표 리스
 bounce_times = []               # 각 바운스가 발생한 시간 리스트 (예: [1.23, 2.45, 3.67, ...])
 
 CONTINUOUS_TIMEOUT = 1.0        # 연속된 바운스 간의 최소 시간 간격(초) (바운스가 너무 멀어지면 떨어진걸로 인식)
-last_bounce_time = None         # 마지막 바운스가 감지된 시간 (예: 1234567.89)
+current_bounce_time = None         # 마지막 바운스가 감지된 시간 (예: 1234567.89)
 
 sound_enabled = False           # 바운스 시 소리 재생 여부 (True: 소리 켬, False: 소리 끔)
 ignore_zero_orange = False      # 오렌지색 픽셀이 0일 때 무시할지 여부 (True: 무시, False: 처리)
@@ -104,8 +108,8 @@ def get_color(count):
 # =============================================================================
 # 드래그/리사이즈 가능한 빨간 사각형 관련 전역 변수
 # =============================================================================
-drag_rect_x, drag_rect_y = 100, 100  # 사각형 왼상단 초기 위치
-drag_rect_w, drag_rect_h = 150, 150  # 사각형 폭, 높이
+drag_rect_x, drag_rect_y = 0, 0  # 사각형 왼상단 초기 위치
+drag_rect_w, drag_rect_h = 640, 240  # 사각형 폭, 높이
 dragging = False                     # 현재 드래그(이동) 중인지 여부
 resizing_corner = None               # 현재 리사이즈 중인 corner (None, 'tl', 'tr', 'bl', 'br')
 drag_offset_x, drag_offset_y = 0, 0  # (이동용) 드래그 시작점 대비 사각형 내부 오프셋 이걸 통해 드래그해서 움직였을때 사각형의 새로운 왼쪽 상단 좌표 알수 있음!
@@ -485,6 +489,70 @@ def draw_orange_graph(x_data, orange_data, width=640, height=480, max_y=None):  
 
     return graph_img  # 완성된 그래프 이미지 반환
 
+def draw_tournament_img(bounce_history, width=640, height=480):
+    graph_img = np.zeros((height, width, 3), dtype=np.uint8)                 # 검은색 배경의 640x480 이미지 생성 (예: 모든 픽셀이 (0,0,0))
+                
+    # 사각형 세로 길이를 조정할 변수 도입
+    rectangle_height = 80                                                  # 사각형의 세로 길이 (예: 80픽셀)
+
+    # 2) bounce history 사각형을 그리는 로직 수행
+    square_width = 55                                                      # 각 사각형의 가로 길이 (예: 55픽셀)
+    margin = 20                                                           # 사각형 간의 간격 (예: 20픽셀)
+    num_squares = 8                                                       # 그릴 사각형의 총 개수 (예: 8개)
+    total_width = num_squares * square_width + (num_squares - 1) * margin  # 전체 사각형들의 너비 (예: 8*55 + 7*20 = 580픽셀)
+    offset_x = 640 - total_width - margin                                 # x축 시작 위치 (예: 640 - 580 - 20 = 40픽셀)
+    offset_y = 480 - rectangle_height - margin                            # y축 시작 위치 (예: 480 - 80 - 20 = 380픽셀)
+
+    # 각 사각형에 이름과 숫자를 표시하기 위한 리스트
+    names = [f"Name{i+1}" for i in range(num_squares)]                    # 각 사각형의 이름 리스트 (예: ["Name1", "Name2", ..., "Name8"])
+    numbers = bounce_history[-num_squares:]                               # 마지막 8개의 바운스 기록 (예: [10, 15, 20, 25, 30, 35, 40, 45])
+
+    for i in range(num_squares):                                          # 0부터 7까지 반복
+        x1 = offset_x + i * (square_width + margin)                       # 현재 사각형의 왼쪽 x좌표 (예: i=0일 때 40, i=1일 때 115)
+        y1 = offset_y                                                     # 현재 사각형의 위쪽 y좌표 (예: 380)
+        x2 = x1 + square_width                                           # 현재 사각형의 오른쪽 x좌표 (예: i=0일 때 95, i=1일 때 170)
+        y2 = y1 + rectangle_height                                       # 현재 사각형의 아래쪽 y좌표 (예: 460)
+
+        # 사각형 그리기
+        cv2.rectangle(graph_img, (x1, y1), (x2, y2), (255, 255, 255), 2)   # 흰색 테두리로 사각형 그리기 (예: (40,380)에서 (95,460)까지)
+
+        if i < len(numbers):                                              # numbers 리스트 범위 내인 경우
+            # 이름 그리기 (사각형 위쪽)
+            name = names[i]                                               # 현재 사각형의 이름 (예: "Name1")
+            (text_w, text_h), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)  # 텍스트 크기 계산 (예: width=30, height=10)
+            text_x = x1 + (square_width - text_w) // 2                    # 텍스트 x 중앙 정렬 위치 (예: x1 + (55-30)/2)
+            text_y = y1 + text_h + 5                                      # 텍스트 y 위치 (예: 380 + 10 + 5)
+            cv2.putText(
+                graph_img,
+                name,
+                (text_x, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,                                                      # 폰트 크기 0.5
+                (255, 255, 255),                                         # 흰색으로 텍스트 표시
+                1,                                                       # 텍스트 두께 1픽셀
+                cv2.LINE_AA
+            )
+
+            # 숫자 그리기 (사각형 아래쪽)
+            number = str(numbers[i])                                      # 현재 바운스 기록을 문자열로 변환 (예: "25")
+            (num_w, num_h), _ = cv2.getTextSize(number, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)  # 숫자 크기 계산 (예: width=20, height=15)
+            num_x = x1 + (square_width - num_w) // 2                      # 숫자 x 중앙 정렬 위치 (예: x1 + (55-20)/2)
+            num_y = y2 - 10                                              # 숫자 y 위치 (예: 460 - 10)
+            cv2.putText(
+                graph_img,
+                number,
+                (num_x, num_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.0,                                                      # 폰트 크기 1.0
+                (255, 255, 255),                                         # 흰색으로 숫자 표시
+                2,                                                       # 숫자 두께 2픽셀
+                cv2.LINE_AA
+            )
+
+    
+    return graph_img
+
+
 # ----------------------------------------------------------------------------------------
 # 13) Combined, Bounce Count 창을 생성 & Combined 창을 전체화면으로 시작
 # ----------------------------------------------------------------------------------------
@@ -628,6 +696,8 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
                 elif (time.time() - stationary_start_time) >= stationary_threshold:  # 정지 상태가 임계 시간을 넘어선 경우 (예: 2초 이상 정지)
                     if in_rect_time >= 2.0 and current_state != "ready":            # 빨간 사각형 안에 2초 이상 있고, waiting 상태인경우(ready 상태가 아닌 경우)
                         current_state = "ready"          # 상태를 준비 상태로 변경
+                        ready_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\jihun_준비완료.mp3")
+                        ready_sound.play()
                         state_change_time = time.time()  # 상태 변경 시간 기록
                         print("State changed to READY")  # 상태 변경 로그 출력
 
@@ -655,7 +725,7 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
                                 bounce_count += 1                            # 바운스 횟수 증가 (예: 첫 번째 바운스면 1, 두 번째 바운스면 2)
                                 print("Bounce detected!")                    # 바운스 감지 메시지 출력
                                 if sound_enabled:                            # 소리 재생이 활성화된 경우
-                                    sound.play()                            # 바운스 소리 재생
+                                    bounce_count_sound.play()                            # 바운스 소리 재생
 
                                 bounce_points.append((x_values[-1], y_values[-1]))  # 바운스 발생 위치 저장 (예: x=100, y=200에서 바운스)
                                 current_bounce_time = time.time()                   # 현재 바운스 시간 기록
@@ -760,6 +830,7 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
             consecutiveUpCount = 0                                                                # 연속 상승 카운트 초기화 (예: consecutiveUpCount=1 -> consecutiveUpCount=0)
             state = None                                                                          # 공의 이동 상태 초기화 (예: state="down" -> state=None)
             current_state = "waiting"                                                             # 현재 상태를 "waiting"으로 변경 (예: current_state="tracking" -> current_state="waiting")
+            pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\alert-234711.mp3").play() # 게임 오버 사운드 (바운스 카운트가 0이 됐을때)
             print("No detection for 1 second in TRACKING => bounce_count reset to 0, state changed to WAITING")  # 상태 변경 메시지 출력
 
     # 그래프 데이터 길이 제한
@@ -769,10 +840,23 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
         orange_pixel_values.pop(0)                                              # 오렌지픽셀 수 리스트의 첫 번째 요소 제거 (예: orange_pixel_values=[150,148,152] -> [148,152])
 
     # 바운스 연속 감지 제한 (Optional)
-    if last_bounce_time is not None:                                                # 마지막 바운스 시간이 존재하는지 확인 (예: last_bounce_time=1234567.89)
-        if time.time() - last_bounce_time > CONTINUOUS_TIMEOUT:                     # 마지막 바운스로부터 1초 이상 지났는지 확인 (예: time.time()=1234569.0, last_bounce_time=1234567.89)
-            bounce_count = 0                                                        # 바운스 카운트 초기화 (예: bounce_count=5 -> bounce_count=0)
-            last_bounce_time = None                                                 # 마지막 바운스 시간 초기화 (예: last_bounce_time=1234567.89 -> None)
+    if current_bounce_time is not None:                                                # 마지막 바운스 시간이 존재하는지 확인 (예: current_bounce_time=1234567.89)
+        if time.time() - current_bounce_time > CONTINUOUS_TIMEOUT:                     # 마지막 바운스로부터 1초 이상 지났는지 확인 (예: time.time()=1234569.0, current_bounce_time=1234567.89)
+            bounce_history.append(bounce_count)                                                    # 현재 바운스 카운트를 기록에 추가 (예: bounce_history=[5,7,3] -> [5,7,3,4])
+            if len(bounce_history) > 8:                                                           # 바운스 기록이 8개를 초과하는지 확인 (예: len(bounce_history)=9)
+                bounce_history.pop(0)                                                             # 가장 오래된 바운스 기록 제거 (예: bounce_history=[5,7,3,4] -> [7,3,4])
+
+            bounce_count = 0                                                                      # 바운스 카운트 초기화 (예: bounce_count=4 -> bounce_count=0)
+            current_state = "waiting"                                                             # 현재 상태를 "waiting"으로 변경 (예: current_state="tracking" -> current_state="waiting")
+            pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\alert-234711.mp3").play() # 게임 오버 사운드 (바운스 카운트가 0이 됐을때)
+            consecutiveDownCount = 0                                                              # 연속 하강 카운트 초기화 (예: consecutiveDownCount=2 -> consecutiveDownCount=0)
+            consecutiveUpCount = 0                                                                # 연속 상승 카운트 초기화 (예: consecutiveUpCount=1 -> consecutiveUpCount=0)
+            state = None                                                                          # 공의 이동 상태 초기화 (예: state="down" -> state=None)
+
+            current_bounce_time = None               # 마지막 바운스 시간 초기화 (예: current_bounce_time=1234567.89 -> None)
+            bounce_points = []                       # 바운스 위치 목록 초기화
+            bounce_times = []                        # 바운스 시간 목록 초기화
+            previous_bounce_time = None              # 이전 바운스 시간 초기화
             print("No bounce for a while -> reset bounce_count to 0")              # 초기화 메시지 출력
 
     # ------------------------------------------------------------------------------------
@@ -812,7 +896,7 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
             (10, 90),  # 텍스트 위치 (예: FPS 텍스트 아래 30픽셀)
             cv2.FONT_HERSHEY_SIMPLEX,
             1.0,
-            (255, 255, 255),
+            (0, 0, 0),
             2,
             cv2.LINE_AA
         )
@@ -853,7 +937,7 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
         cv2.LINE_AA
     )
 
-    # y_graph / orange_graph
+    # y_graph (프레임수에 따른 y좌표) / orange_graph (탁구공 주황색 계열 감지되는 픽셀수) / tournament_img (오른쪽 아래 토너먼트)
     y_graph_img = draw_y_graph(
         x_values,  # x축 데이터 (예: 프레임 [1,2,3,4,5])
         y_values,  # y축 데이터 (예: [100,150,200,180,160])
@@ -872,69 +956,24 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
         max_y=max_orange  # y축 최대값 (최대 오렌지 픽셀 수)
     )
 
+    tournament_img = draw_tournament_img(
+        bounce_history,
+        width=640,
+        height=480
+    )
+
     # enlarged_view 여부에 따라 화면 배치
     if enlarged_view is None:
         # 4분할 표시
         combined_img[0:480, 0:640] = frame_resized       # top-left: 원본 영상 표시 (예: 카메라 화면)
         combined_img[0:480, 640:1280] = y_graph_img      # top-right: y좌표 그래프 표시 (예: 공의 높이 변화 그래프)
         combined_img[480:960, 0:640] = orange_graph_img  # bottom-left: 오렌지색 픽셀 그래프 표시 (예: 공의 크기 변화 그래프)
+        combined_img[480:960, 640:1280] = tournament_img         # bottom-right: 참가자마다 바운스 기록 표시 (예: 바운스 히스토리)
 
-        # bottom-right (480:960, 640:1280) => bounce_history 표시
-        square_width = 55                                # 각 사각형의 너비 (예: 55픽셀)
-        margin = 20                                      # 사각형 사이의 간격 (예: 20픽셀)
-        num_squares = 8                                  # 표시할 사각형의 개수 (예: 8개)
-        total_width = num_squares * square_width + (num_squares - 1) * margin  # 전체 사각형들의 너비 (예: 8*55 + 7*20 = 580픽셀)
-        offset_x = 1280 - total_width - margin          # x축 시작 위치 (예: 1280 - 580 - 20 = 680픽셀)
-        offset_y = 960 - square_width - margin          # y축 시작 위치 (예: 960 - 55 - 20 = 885픽셀)
 
-        # 각 사각형에 이름과 숫자를 표시하기 위한 리스트 (예시)
-        names = [f"Name{i+1}" for i in range(num_squares)]  # 각 사각형의 이름 리스트 (예: ["Name1", "Name2", ..., "Name8"])
-        numbers = bounce_history[-num_squares:]             # 마지막 8개의 바운스 기록 (예: [10, 15, 20, 25, 30, 35, 40, 45])
-
-        for i in range(num_squares): #모든 사각형에 대해서 반복
-            x1 = offset_x + i * (square_width + margin)    # 현재 사각형의 왼쪽 x좌표 (예: i=0일 때 680, i=1일 때 755)
-            y1 = offset_y                                  # 현재 사각형의 위쪽 y좌표 (예: 885)
-            x2 = x1 + square_width                        # 현재 사각형의 오른쪽 x좌표 (예: i=0일 때 735, i=1일 때 810)
-            y2 = y1 + square_width                        # 현재 사각형의 아래쪽 y좌표 (예: 940)
-
-            # 사각형 그리기
-            cv2.rectangle(combined_img, (x1, y1), (x2, y2), (255, 255, 255), 2)  # 흰색 테두리로 사각형 그리기
-
-            if i < len(numbers): 
-                # 참가지 이름 그리기 (사각형 위쪽)
-                name = names[i]                            # 현재 사각형의 이름 (예: "Name1")
-                (text_w, text_h), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)  # 텍스트 크기 계산 (예: width=30, height=10)
-                text_x = x1 + (square_width - text_w) // 2  # 텍스트 x 중앙 정렬 위치 (예: x1 + (55-30)/2)
-                text_y = y1 + text_h + 2                    # 텍스트 y 위치 (예: y1 + 10 + 2)
-                cv2.putText(
-                    combined_img,
-                    name,
-                    (x1, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.3,                                    # 폰트 크기 0.3
-                    (255, 255, 255),                       # 흰색으로 텍스트 표시
-                    1,                                     # 텍스트 두께 1픽셀
-                    cv2.LINE_AA
-                )
-
-                # 숫자 그리기 (사각형 아래쪽)
-                number = str(numbers[i])                   # 현재 바운스 기록을 문자열로 변환 (예: "25")
-                (num_w, num_h), _ = cv2.getTextSize(number, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)  # 숫자 크기 계산 (예: width=20, height=15)
-                num_x = x1 + (square_width - num_w) // 2   # 숫자 x 중앙 정렬 위치 (예: x1 + (55-20)/2)
-                num_y = y2 - 5                             # 숫자 y 위치 (사각형 아래에서 5픽셀 위)
-                cv2.putText(
-                    combined_img,
-                    number,
-                    (x1, num_y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,                                   # 폰트 크기 0.6
-                    (255, 255, 255),                       # 흰색으로 숫자 표시
-                    2,                                     # 숫자 두께 2픽셀
-                    cv2.LINE_AA
-                )
 
     else:
-        # (A) 'tl', 'tr', 'bl', 'br' 중 하나만 크게
+        # (A) 'tl', 'tr', 'bl', 'br' 중 하나만 크게 우클릭 한 경우!
         if enlarged_view == 'tl':                                                  # enlarged_view가 'tl'(top-left)인 경우
             big_view = cv2.resize(frame_resized, (1280, 960), interpolation=cv2.INTER_AREA)  # frame_resized를 1280x960으로 확대 (예: 640x480 -> 1280x960)
             combined_img = big_view                                                # combined_img에 확대된 이미지 할당 (예: 1280x960 크기의 카메라 영상)
@@ -945,69 +984,10 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
             big_view = cv2.resize(orange_graph_img, (1280, 960), interpolation=cv2.INTER_AREA)  # orange_graph_img를 1280x960으로 확대 (예: 640x480 -> 1280x960)
             combined_img = big_view                                                # combined_img에 확대된 이미지 할당 (예: 1280x960 크기의 주황색 픽셀 그래프)
         elif enlarged_view == 'br':                                               # enlarged_view가 'br'(bottom-right)인 경우
-            # (A) 'tl', 'tr', 'bl', 'br' 중 하나만 크게
-            # 1) bottom-right 확대를 위해 640x480 캔버스(sub_img) 만들기
-            sub_img = np.zeros((480, 640, 3), dtype=np.uint8)                     # 검은색 배경의 640x480 이미지 생성 (예: 모든 픽셀이 (0,0,0))
+            # 1) bottom-right 확대를 위해 640x480 캔버스(tournament_img) 만들기
 
-            # 사각형 세로 길이를 조정할 변수 도입
-            rectangle_height = 80                                                  # 사각형의 세로 길이 (예: 80픽셀)
-
-            # 2) bounce history 사각형을 그리는 로직 수행
-            square_width = 55                                                      # 각 사각형의 가로 길이 (예: 55픽셀)
-            margin = 20                                                           # 사각형 간의 간격 (예: 20픽셀)
-            num_squares = 8                                                       # 그릴 사각형의 총 개수 (예: 8개)
-            total_width = num_squares * square_width + (num_squares - 1) * margin  # 전체 사각형들의 너비 (예: 8*55 + 7*20 = 580픽셀)
-            offset_x = 640 - total_width - margin                                 # x축 시작 위치 (예: 640 - 580 - 20 = 40픽셀)
-            offset_y = 480 - rectangle_height - margin                            # y축 시작 위치 (예: 480 - 80 - 20 = 380픽셀)
-
-            # 각 사각형에 이름과 숫자를 표시하기 위한 리스트
-            names = [f"Name{i+1}" for i in range(num_squares)]                    # 각 사각형의 이름 리스트 (예: ["Name1", "Name2", ..., "Name8"])
-            numbers = bounce_history[-num_squares:]                               # 마지막 8개의 바운스 기록 (예: [10, 15, 20, 25, 30, 35, 40, 45])
-
-            for i in range(num_squares):                                          # 0부터 7까지 반복
-                x1 = offset_x + i * (square_width + margin)                       # 현재 사각형의 왼쪽 x좌표 (예: i=0일 때 40, i=1일 때 115)
-                y1 = offset_y                                                     # 현재 사각형의 위쪽 y좌표 (예: 380)
-                x2 = x1 + square_width                                           # 현재 사각형의 오른쪽 x좌표 (예: i=0일 때 95, i=1일 때 170)
-                y2 = y1 + rectangle_height                                       # 현재 사각형의 아래쪽 y좌표 (예: 460)
-
-                # 사각형 그리기
-                cv2.rectangle(sub_img, (x1, y1), (x2, y2), (255, 255, 255), 2)   # 흰색 테두리로 사각형 그리기 (예: (40,380)에서 (95,460)까지)
-
-                if i < len(numbers):                                              # numbers 리스트 범위 내인 경우
-                    # 이름 그리기 (사각형 위쪽)
-                    name = names[i]                                               # 현재 사각형의 이름 (예: "Name1")
-                    (text_w, text_h), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)  # 텍스트 크기 계산 (예: width=30, height=10)
-                    text_x = x1 + (square_width - text_w) // 2                    # 텍스트 x 중앙 정렬 위치 (예: x1 + (55-30)/2)
-                    text_y = y1 + text_h + 5                                      # 텍스트 y 위치 (예: 380 + 10 + 5)
-                    cv2.putText(
-                        sub_img,
-                        name,
-                        (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,                                                      # 폰트 크기 0.5
-                        (255, 255, 255),                                         # 흰색으로 텍스트 표시
-                        1,                                                       # 텍스트 두께 1픽셀
-                        cv2.LINE_AA
-                    )
-
-                    # 숫자 그리기 (사각형 아래쪽)
-                    number = str(numbers[i])                                      # 현재 바운스 기록을 문자열로 변환 (예: "25")
-                    (num_w, num_h), _ = cv2.getTextSize(number, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)  # 숫자 크기 계산 (예: width=20, height=15)
-                    num_x = x1 + (square_width - num_w) // 2                      # 숫자 x 중앙 정렬 위치 (예: x1 + (55-20)/2)
-                    num_y = y2 - 10                                              # 숫자 y 위치 (예: 460 - 10)
-                    cv2.putText(
-                        sub_img,
-                        number,
-                        (num_x, num_y),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1.0,                                                      # 폰트 크기 1.0
-                        (255, 255, 255),                                         # 흰색으로 숫자 표시
-                        2,                                                       # 숫자 두께 2픽셀
-                        cv2.LINE_AA
-                    )
-
-            # 3) 완성된 sub_img를 1280x960으로 확대 후 combined_img에 넣기
-            big_view = cv2.resize(sub_img, (1280, 960), interpolation=cv2.INTER_AREA)  # sub_img를 1280x960으로 확대 (예: 640x480 -> 1280x960)
+            # 3) 완성된 tournament_img 1280x960으로 확대 후 combined_img에 넣기
+            big_view = cv2.resize(tournament_img, (1280, 960), interpolation=cv2.INTER_AREA)  # tournament_img 1280x960으로 확대 (예: 640x480 -> 1280x960)
             combined_img = big_view                                                # combined_img에 확대된 이미지 할당 (예: 1280x960 크기의 바운스 히스토리)
 
     # 최종 표시
