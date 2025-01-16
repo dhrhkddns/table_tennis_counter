@@ -12,8 +12,12 @@ user32 = ctypes.windll.user32
 # 1) pygame 오디오 초기화 및 사운드 로드
 # ----------------------------------------------------------------------------------------
 pygame.mixer.init()
+#카운트 1마다 다른 일반적인 점수 카운트 사운드
 bounce_count_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\retro-coin-4-236671.mp3")
-
+#공이 준비 영역안에 처음 들어갔을때 소리
+tap_notification_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\tap-notification-180637.mp3")  # 기존 소리 파일 로드
+#카운트 10마다 다른 차별화된 사운드
+collect_points_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\collect-points-190037.mp3")  # 새로운 소리 파일 로드
 # ----------------------------------------------------------------------------------------
 # 2) YOLO 모델 로드
 # ----------------------------------------------------------------------------------------
@@ -58,10 +62,15 @@ CONTINUOUS_TIMEOUT = 1.0        # 연속된 바운스 간의 최소 시간 간�
 current_bounce_time = None         # 마지막 바운스가 감지된 시간 (예: 1234567.89)
 
 sound_enabled = False           # 바운스 시 소리 재생 여부 (True: 소리 켬, False: 소리 끔)
-ignore_zero_orange = False      # 오렌지색 픽셀이 0일 때 무시할지 여부 (True: 무시, False: 처리)
+ignore_zero_orange = True      # 오렌지색 픽셀이 0일 때 무시할지 여부 (True: 무시, False: 처리)
 
 button_rect = [500, 20, 120, 40]         # 소리 켜기/끄기 버튼의 위치와 크기 [x, y, width, height]
 button_rect_ignore = [500, 70, 120, 40]  # 오렌지픽셀 무시 설정 버튼의 위치와 크기 [x, y, width, height]
+
+#웹캠 선택을 위한 전역 변수
+current_camera_index = 0  # 현재 선택된 웹캠 인덱스(기본 0)
+webcam_button_rects = []  # 웹캠 버튼(6개)을 담을 리스트 [(x, y, w, h), ...]
+
 
 FONT_PATH = r"C:\Users\omyra\Desktop\coding\ping_pong\Digital Display.ttf"  # 디지털 폰트 파일 경로
 FONT_SIZE = 400                 # 폰트 크기 (픽셀 단위)
@@ -81,6 +90,8 @@ color_sequence = [
     (255, 0, 255)     # 보라색
 ]
 intensity_levels = [0.5 + 0.05 * i for i in range(10)]  # 각 색상의 밝기 레벨 (예: [0.5, 0.55, 0.6, ..., 0.95])
+
+
 
 def get_color(count):
     if count >= 1000:  # 바운스 카운트가 1000 이상이면 보라색 반환 (예: count=1234 -> (255,0,255))
@@ -109,7 +120,7 @@ def get_color(count):
 # 드래그/리사이즈 가능한 빨간 사각형 관련 전역 변수
 # =============================================================================
 drag_rect_x, drag_rect_y = 0, 0  # 사각형 왼상단 초기 위치
-drag_rect_w, drag_rect_h = 640, 240  # 사각형 폭, 높이
+drag_rect_w, drag_rect_h = 640, 300  # 사각형 폭, 높이
 dragging = False                     # 현재 드래그(이동) 중인지 여부
 resizing_corner = None               # 현재 리사이즈 중인 corner (None, 'tl', 'tr', 'bl', 'br')
 drag_offset_x, drag_offset_y = 0, 0  # (이동용) 드래그 시작점 대비 사각형 내부 오프셋 이걸 통해 드래그해서 움직였을때 사각형의 새로운 왼쪽 상단 좌표 알수 있음!
@@ -252,6 +263,8 @@ def mouse_callback(event, x, y, flags, param):
             drag_rect_x, drag_rect_y = new_x, new_y                    # 계산된 새로운 위치 적용
 
     elif event == cv2.EVENT_LBUTTONDOWN:                                # 마우스 왼쪽 버튼을 눌렀을 때
+        global current_camera_index, cap  #함수안에서 전역변수 바꾸기 위해서는 GLOBAL 키워드 사용해야함.
+        
         # 사운드 ON/OFF 버튼
         if (button_rect[0] <= x - 640 <= button_rect[0] + button_rect[2] and    # 예: 500 <= x-640 <= 620 (버튼 x범위 체크)
             button_rect[1] <= y <= button_rect[1] + button_rect[3]):            # 예: 20 <= y <= 60 (버튼 y범위 체크)
@@ -288,6 +301,31 @@ def mouse_callback(event, x, y, flags, param):
                     dragging = True                                       # 드래그 시작
                     drag_offset_x = x - drag_rect_x                      # 드래그 시작점과 사각형 좌상단의 x차이 (예: 150-100=50)
                     drag_offset_y = y - drag_rect_y                      # 드래그 시작점과 사각형 좌상단의 y차이 (예: 150-100=50)
+
+        # --- (추가) webcam_button_rects(6개) 클릭 처리 ---
+
+        for (rx1, ry1, rx2, ry2, cam_idx) in webcam_button_rects:
+            if (rx1 <= x - 640 <= rx2) and (ry1 <= y <= ry2):
+                print(f"Webcam button {cam_idx} clicked!")
+                if current_camera_index != cam_idx:
+                    # 1) 현재 캡쳐 중인 카메라 해제
+                    cap.release()
+                    # 2) 새 카메라 열기
+                    cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW) #MJPG DSHOW의 궁합은 초과 프레임을 만들어내서 좋다.
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                    # 필요 시 해상도, FPS 등 다시 세팅 근데 이거 설정하면 프레임 제동 걸려서 60 안됨. 더크게도 안될것 같다ㅠ
+                    # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    # cap.set(cv2.CAP_PROP_FPS, 35)
+
+                    if cap.isOpened():
+                        print(f"Switched to webcam index {cam_idx} successfully.")
+                        current_camera_index = cam_idx
+                    else:
+                        print(f"Failed to open webcam index {cam_idx}.")
+
+                # 다른 webcam_button_rects는 확인할 필요없이 break
+                break
 
     elif event == cv2.EVENT_LBUTTONUP:                              # 마우스 왼쪽 버튼을 뗐을 때
         dragging = False                                            # 드래그 종료
@@ -349,8 +387,9 @@ def render_text_with_ttf(                                        # TTF 폰트로
 # 11) y좌표 그래프 그리기 함수
 # ----------------------------------------------------------------------------------------
 def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=None):
+    global sound_enabled, ignore_zero_orange
     if bounce_pts is None:
-        bounce_pts = []  # bounce_pts가 None이면 빈 리스트로 초기화 (예: bounce_pts = [])
+        bounce_pts = [] 
 
     graph_img = np.zeros((height, width, 3), dtype=np.uint8)  # 검은색 배경 이미지 생성 (예: 640x480 크기의 검은색 이미지)
     if len(x_data) < 2:
@@ -406,7 +445,7 @@ def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=No
         2  # 텍스트 두께
     )
 
-    # Ignore0 버튼 그리기
+    # IgnoreOg 버튼 그리기
     cv2.rectangle(
         graph_img,
         (button_rect_ignore[0], button_rect_ignore[1]),  # 버튼 좌상단 좌표 (예: (120,10))
@@ -414,18 +453,69 @@ def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=No
         (120, 120, 120),  # 회색
         -1
     )
-    text_ignore = "Ignore0: ON" if ignore_zero_orange else "Ignore0: OFF"  # Ignore0 상태 텍스트 (예: "Ignore0: ON")
+    text_ignore = "IgnoreOg: ON" if ignore_zero_orange else "IgnoreOg: OFF"  # IgnoreOg 상태 텍스트 (예: "IgnoreOg: ON")
     cv2.putText(
         graph_img,
         text_ignore,
         (button_rect_ignore[0] + 5, button_rect_ignore[1] + 25),  # 텍스트 위치 (예: (125,35))
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,  # 폰트 크기
+        0.5,  # 폰트 크기
         (255, 255, 255),  # 흰색
         2  # 텍스트 두께
     )
 
+    # 웹캠 버튼 그리기
+    box_width = 40
+    box_height = 40
+    start_x = button_rect_ignore[0]
+    start_y = button_rect_ignore[1] + 50
+    draw_webcam_buttons(graph_img, start_x, start_y, box_width, box_height, margin=5)    
+
+
     return graph_img  # 완성된 그래프 이미지 반환
+
+def draw_webcam_buttons(base_img, start_x, start_y, box_width, box_height, margin=5):
+    """
+    6개의 웹캠 버튼(윗줄 3개, 아랫줄 3개)을 base_img 위에 그린 뒤,
+    각 버튼 사각형 정보를 전역 리스트 webcam_button_rects 에 저장한다.
+    """
+    global webcam_button_rects
+    webcam_button_rects.clear()  # 혹시나 이전 프레임의 rects가 남아있을 수 있으므로 매 프레임마다 비움
+    
+    # 총 6개 (0~5)
+    # 윗줄: 인덱스 0,1,2
+    # 아랫줄: 인덱스 3,4,5
+    
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.7
+    thickness = 2
+    text_color = (255, 255, 255)  # 흰색 글자
+    box_color = (0, 0, 0)         # 검은색 테두리
+    
+    idx = 0
+    for row in range(2):     # row=0(윗줄), row=1(아랫줄)
+        for col in range(3): # col=0~2
+            x1 = start_x + col*(box_width + margin)
+            y1 = start_y + row*(box_height + margin)
+            x2 = x1 + box_width
+            y2 = y1 + box_height
+            
+            # 테두리 그리기 (두께 2)
+            cv2.rectangle(base_img, (x1, y1), (x2, y2), box_color, 2)
+            
+            # 중앙에 인덱스 번호 표시
+            text = str(idx)
+            (tw, th), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            tx = x1 + (box_width - tw)//2
+            ty = y1 + (box_height + th)//2
+            
+            cv2.putText(base_img, text, (tx, ty), font, font_scale, text_color, thickness, cv2.LINE_AA)
+            
+            # 전역 리스트에 저장
+            webcam_button_rects.append((x1, y1, x2, y2, idx))
+            
+            idx += 1
+
 
 # ----------------------------------------------------------------------------------------
 # 12) 오렌지 픽셀 그래프 그리기 함수
@@ -619,7 +709,8 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
     ret, frame = cap.read()  # 카메라/비디오에서 새 프레임을 읽어옴
     if not ret:  # 프레임을 읽지 못했다면
         print("No more frames or camera error.")  # 에러 메시지 출력
-        break  # 루프 종료
+        # 예: 640x480 크기의 검은색(0,0,0) 프레임 생성
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
     current_time = time.time()  # 현재 시간을 가져옴 (FPS 계산을 위해 필요)
     time_diff = current_time - prev_time  # 이전 프레임과의 시간 차이 계산
@@ -725,8 +816,11 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
                                 bounce_count += 1                            # 바운스 횟수 증가 (예: 첫 번째 바운스면 1, 두 번째 바운스면 2)
                                 print("Bounce detected!")                    # 바운스 감지 메시지 출력
                                 if sound_enabled:                            # 소리 재생이 활성화된 경우
-                                    bounce_count_sound.play()                            # 바운스 소리 재생
-
+                                    if bounce_count % 10 == 0:               # 바운스 카운트가 10의 배수일 때
+                                        collect_points_sound.play()            # 새로운 소리 재생
+                                    else:
+                                        bounce_count_sound.play()             # 기존 소리 재생
+                                
                                 bounce_points.append((x_values[-1], y_values[-1]))  # 바운스 발생 위치 저장 (예: x=100, y=200에서 바운스)
                                 current_bounce_time = time.time()                   # 현재 바운스 시간 기록
                                 bounce_times.append(current_bounce_time)            # 바운스 시간 목록에 추가
@@ -800,6 +894,11 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
             drag_rect_y <= y_center < drag_rect_y + drag_rect_h):                # y좌표가 사각형 내부인지 확인 (예: 200 <= 220 < 200+150)
             if ball_in_rect_start is None:                                       # 공이 처음 사각형에 들어온 경우 (예: ball_in_rect_start=None)
                 ball_in_rect_start = time.time()                                 # 진입 시점 기록 (예: ball_in_rect_start=1234567.89)
+
+                # 만약 현재 상태가 "tracking"이 아니라면 탭 소리를 재생
+                if current_state != "tracking":
+                    tap_notification_sound.play()
+
             in_rect_time = time.time() - ball_in_rect_start                     # 사각형 내 체류 시간 계산 (예: in_rect_time=1.23)
         else:                                                                    # 공이 사각형 밖에 있는 경우
             in_rect_time = 0.0                                                  # 체류 시간 초기화 (예: in_rect_time=0.0)
@@ -871,11 +970,11 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
     # ### (추가/수정 부분) : 여기서 frame_resized에 State, FPS, Bounce Dt를 표시
     cv2.putText(
         frame_resized,
-        f"State: {current_state.upper()}",  # 현재 상태를 대문자로 표시 (예: "State: TRACKING")
+        f"CurrentState: {current_state.upper()}",  # 현재 상태를 대문자로 표시 (예: "State: TRACKING")
         (10, 30),  # 텍스트 위치 좌표 (예: 좌측 상단에서 x=10, y=30 위치)
         cv2.FONT_HERSHEY_SIMPLEX,  # 폰트 종류 (예: 기본 산세리프체)
-        1.0,  # 폰트 크기 (예: 1.0배 크기)
-        (255, 255, 255),  # 텍스트 색상 (예: 흰색)
+        1.0,  # 폰트 크기 (예: 1.0배 크기)  
+        (0, 0, 0),  # 텍스트 색상 (예: 흰색)
         2,  # 텍스트 두께 (예: 2픽셀)
         cv2.LINE_AA  # 안티앨리어싱 적용 (예: 텍스트 가장자리를 부드럽게)
     )
@@ -885,7 +984,7 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
         (10, 60),  # 텍스트 위치 (예: State 텍스트 아래 30픽셀)
         cv2.FONT_HERSHEY_SIMPLEX,
         1.0,
-        (255, 255, 255),
+        (0, 0, 0),
         2,
         cv2.LINE_AA
     )
@@ -929,7 +1028,7 @@ while True:  # 무한 루프로 비디오/카메라 프레임을 계속 처리
     cv2.putText(
         frame_resized,
         f"In-Rect Time: {in_rect_time:.2f}s",  # 사각형 내 체류 시간 표시 (예: "In-Rect Time: 1.50s")
-        (drag_rect_x + 5, drag_rect_y + 25),  # 사각형 내부 상단에 표시 (예: (105,225))
+        (drag_rect_x + drag_rect_w - 300, drag_rect_y + 25),  # 사각형 내부 상단에 표시 (예: (105,225))
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,  # 폰트 크기 0.8배
         (0, 0, 255),  # 빨간색
