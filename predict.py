@@ -54,7 +54,7 @@ last_y = None
 bounce_points = []
 bounce_times = []
 
-CONTINUOUS_TIMEOUT = 1.0
+CONTINUOUS_TIMEOUT = 1.2
 current_bounce_time = None
 
 sound_enabled = False
@@ -129,6 +129,8 @@ corner_size = 10
 ball_in_rect_start = None
 in_rect_time = 0.0
 
+ball_missing_frames = 0
+MISSING_FRAMES_THRESHOLD = 5
 # ----------------------------------------------------------------------------------------
 # (A) 우클릭 확대/복귀 기능 관련 전역 변수
 # ----------------------------------------------------------------------------------------
@@ -744,7 +746,7 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
             num_squares=4,
             square_width=55,
             square_height=80,
-            margin=20,
+            margin=95,
             start_y=middle_y,
             names=middle_names,
             numbers=middle_scores,
@@ -756,9 +758,9 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
         draw_row_of_squares(
             base_img,
             num_squares=2,
-            square_width=55,
-            square_height=80,
-            margin=20,
+            square_width=100,
+            square_height=100,
+            margin=200,
             start_y=top_y,
             names=top_names,
             numbers=top_scores,
@@ -774,13 +776,15 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
     # 색상 정의
     BLUE  = (255, 0, 0)   # BGR 형식
     RED   = (0, 0, 255)   # BGR 형식
+    YELLOW = (0, 255, 255) # BGR 형식
+    GREEN = (0, 255, 0)
     WHITE = (255, 255, 255)
 
     # 배경 이미지 생성
     graph_img = np.zeros((height, width, 3), dtype=np.uint8)
 
     # [D-1] 8강
-    bottom_names  = [f"Name{i+1}" for i in range(8)]
+    bottom_names  = ["A", "B", "C", "D", "E", "F", "G", "H"]
     bottom_scores = [0]*8
     bottom_colors = [None]*8
 
@@ -865,13 +869,13 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
 
     if two_count == 2:
         if top_scores[0] > top_scores[1]:
-            top_colors[0] = BLUE
+            top_colors[0] = GREEN
             top_colors[1] = RED
             # (추가) 최종 우승자까지 결정됨
             draw_tournament_img_unified.final_ended = True
         elif top_scores[0] < top_scores[1]:
             top_colors[0] = RED
-            top_colors[1] = BLUE
+            top_colors[1] = GREEN
             # (추가) 최종 우승자까지 결정됨
             draw_tournament_img_unified.final_ended = True
         else:
@@ -1138,21 +1142,40 @@ while True:
         y_values.append(None)
         orange_pixel_values.append(None)
 
-    # 사각형 내부 체류 시간
+    # ------------------------------
+    # (수정 전역 변수) ball_missing_frames = 0
+    # ------------------------------
+    # 공이 감지됨(boxes가 있음) + 오렌지 픽셀도 충분히 있음(detected=True)라면
     if len(boxes) > 0 and detected:
+        # 공의 중심이 사각형 내부인가?
         if (drag_rect_x <= x_center < drag_rect_x + drag_rect_w and
             drag_rect_y <= y_center < drag_rect_y + drag_rect_h):
+            # 만약 처음으로 들어온 경우라면 시작 시간 기록
             if ball_in_rect_start is None:
                 ball_in_rect_start = time.time()
+                # 참고: tracking 상태가 아니라면 tap_notification_sound 등 재생
                 if current_state != "tracking":
                     tap_notification_sound.play()
-            in_rect_time = time.time() - ball_in_rect_start
+
+            # in_rect_time 갱신
+            in_rect_time = time.time() - ball_in_rect_start if ball_in_rect_start else 0.0
+
+            # ★ 공이 정상적으로 사각형 안에서 감지되었으므로 missing_frames 리셋
+            ball_missing_frames = 0
+
         else:
+            # ★ 사각형 내부가 아닌곳에 있으면 프레임 지연없이 바로 초기화
+                in_rect_time = 0.0
+                ball_in_rect_start = None
+
+    # (박스가 없거나, 오렌지픽셀 조건 미달)
+    else:
+        # ★ 이번 프레임에서는 공이 전혀 감지되지 않음 -> missing_frames 증가
+        ball_missing_frames += 1
+        if ball_missing_frames >= MISSING_FRAMES_THRESHOLD:
             in_rect_time = 0.0
             ball_in_rect_start = None
-    else:
-        in_rect_time = 0.0
-        ball_in_rect_start = None
+
 
     # ready 상태에서 공이 안 보이면 waiting으로
     if current_state == "ready":
@@ -1163,9 +1186,12 @@ while True:
     # tracking 중에 공 안 보이면 -> waiting
     if current_state == "tracking":
         if last_detection_time is not None and (time.time() - last_detection_time) >= 1.0:
-            bounce_history.append(bounce_count)
-            if len(bounce_history) > 14:
-                bounce_history.pop(0)
+            
+            if bounce_count > 0:
+                bounce_history.append(bounce_count)
+
+                if len(bounce_history) > 14:
+                    bounce_history.pop(0)
             bounce_count = 0
             consecutiveDownCount = 0
             consecutiveUpCount = 0
@@ -1183,9 +1209,11 @@ while True:
     # 바운스 간 일정 시간 지나면 초기화 (옵션)
     if current_bounce_time is not None:
         if time.time() - current_bounce_time > CONTINUOUS_TIMEOUT:
-            bounce_history.append(bounce_count)
+            if bounce_count > 0:
+                bounce_history.append(bounce_count)
             if len(bounce_history) > 14:
                 bounce_history.pop(0)
+            
             bounce_count = 0
             current_state = "waiting"
             pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\alert-234711.mp3").play()
