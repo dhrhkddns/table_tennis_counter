@@ -2,9 +2,12 @@ import cv2
 import numpy as np
 import time
 import ctypes
+import threading
 from ultralytics import YOLO
 import pygame
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont, ImageDraw
+from gtts import gTTS
+import playsound
 
 user32 = ctypes.windll.user32
 
@@ -12,6 +15,8 @@ user32 = ctypes.windll.user32
 # 1) pygame 오디오 초기화 및 사운드 로드
 # ----------------------------------------------------------------------------------------
 pygame.mixer.init()
+#공이 준비사각형에 일정시간 있었을때 효과음
+ready_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\jihun_준비완료.mp3")
 #1단위 바운스 효과음
 bounce_count_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\retro-coin-4-236671.mp3")
 #10단위 바운스 효과음
@@ -20,6 +25,117 @@ collect_points_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_p
 score_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\score_sound.mp3")  
 #공이 처음 리사이즈 사각형 안에 들어왔을때 효과음
 tap_notification_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\tap-notification-180637.mp3")
+#공이 tracking 상태에서 나가거나 사라졌을때 (한 턴 종료)
+alert_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\alert-234711.mp3")
+#결승 승리 효과음
+final_win_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\level-win-6416.mp3")
+
+# [2] 전역 변수: 마스터 볼륨 & 효과음별 '상대 볼륨' (모두 1.0으로 초기화)
+master_volume = 1.0
+rel_bounce1 = 1.0
+rel_bounce10 = 1.0
+rel_bounce100 = 1.0
+rel_tap = 1.0
+rel_ready = 1.0
+rel_alert = 1.0
+rel_final_win = 1.0
+
+def update_final_volumes():
+    """
+    마스터볼륨 * 상대볼륨 = 실제볼륨 으로 각 사운드에 set_volume()을 적용
+    """
+    bounce_count_sound.set_volume(master_volume * rel_bounce1)
+    collect_points_sound.set_volume(master_volume * rel_bounce10)
+    score_sound.set_volume(master_volume * rel_bounce100)
+    tap_notification_sound.set_volume(master_volume * rel_tap)
+    ready_sound.set_volume(master_volume * rel_ready)
+    alert_sound.set_volume(master_volume * rel_alert)
+    final_win_sound.set_volume(master_volume * rel_final_win)
+
+# 'Volume Control' 창과 Trackbar 콜백 함수 정의
+# [3] 트랙바 콜백 함수들
+# ------------------------------
+def on_trackbar_master(val):
+    global master_volume
+    master_volume = val / 100.0
+    update_final_volumes()
+
+def on_trackbar_bounce1(val):
+    global rel_bounce1
+    rel_bounce1 = val / 100.0
+    update_final_volumes()
+
+def on_trackbar_bounce10(val):
+    global rel_bounce10
+    rel_bounce10 = val / 100.0
+    update_final_volumes()
+
+def on_trackbar_bounce100(val):
+    global rel_bounce100
+    rel_bounce100 = val / 100.0
+    update_final_volumes()
+
+def on_trackbar_tap(val):
+    global rel_tap
+    rel_tap = val / 100.0
+    update_final_volumes()
+
+def on_trackbar_ready(val):
+    global rel_ready
+    rel_ready = val / 100.0
+    update_final_volumes()
+
+def on_trackbar_alert(val):
+    global rel_alert
+    rel_alert = val / 100.0
+    update_final_volumes()
+
+def on_trackbar_final_win(val):
+    global rel_final_win
+    rel_final_win = val / 100.0
+    update_final_volumes()
+
+# 새 창 생성
+cv2.namedWindow("Volume Control")
+
+# 0~100 범위, 현재값 100(=1.0)으로 설정
+cv2.createTrackbar("MasterVolume", "Volume Control", 70, 100, on_trackbar_master)
+cv2.createTrackbar("Bounce1", "Volume Control", 20, 100, on_trackbar_bounce1)
+cv2.createTrackbar("Bounce10", "Volume Control", 35, 100, on_trackbar_bounce10)
+cv2.createTrackbar("Bounce100", "Volume Control", 40, 100, on_trackbar_bounce100)
+cv2.createTrackbar("Tap", "Volume Control", 80, 100, on_trackbar_tap)
+cv2.createTrackbar("Ready", "Volume Control", 70, 100, on_trackbar_ready)
+cv2.createTrackbar("Alert", "Volume Control", 40, 100, on_trackbar_alert)
+cv2.createTrackbar("FinalWin", "Volume Control", 70, 100, on_trackbar_final_win)
+
+def speak_winner(name):
+    """
+    우승자 이름을 gTTS로 발음해주는 간단한 함수 예시
+    여기서는 lang='ko'로 하여 "A 우승!" 형태로 말하도록 했습니다.
+    필요시 영어, 다른 문구 등으로 변경 가능.
+    """
+    text = f"{name} win congratulations!"
+    tts = gTTS(text=text, lang='en')
+    tts.save("winner.mp3")
+    pygame.mixer.music.load("winner.mp3")
+    pygame.mixer.music.play()
+
+
+def mouse_callback_volume(event, x, y, flags, param):
+    global last_mouse_move_time, mouse_visible
+    if event == cv2.EVENT_MOUSEMOVE:
+        last_mouse_move_time = time.time()
+        if not mouse_visible:
+            user32.ShowCursor(True)
+            mouse_visible = True
+
+
+cv2.setMouseCallback("Volume Control", mouse_callback_volume)
+
+
+
+
+
 
 # 2) YOLO 모델 로드
 # ----------------------------------------------------------------------------------------
@@ -57,7 +173,7 @@ bounce_times = []
 CONTINUOUS_TIMEOUT = 1.2
 current_bounce_time = None
 
-sound_enabled = False
+sound_enabled = True
 ignore_zero_orange = True
 
 button_rect = [500, 20, 120, 40]
@@ -117,7 +233,7 @@ def get_color(count):
 # 드래그/리사이즈 가능한 빨간 사각형 관련 전역 변수
 # =============================================================================
 drag_rect_x, drag_rect_y = 0, 0
-drag_rect_w, drag_rect_h = 640, 300
+drag_rect_w, drag_rect_h = 640, 200
 dragging = False
 resizing_corner = None
 drag_offset_x, drag_offset_y = 0, 0
@@ -362,6 +478,8 @@ def mouse_callback(event, x, y, flags, param):
         else:
             print(f"Return to 4-split from: {enlarged_view}")
             enlarged_view = None
+
+
 
 
 # ----------------------------------------------------------------------------------------
@@ -871,11 +989,29 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
         if top_scores[0] > top_scores[1]:
             top_colors[0] = GREEN
             top_colors[1] = RED
+
+            # [★ 추가] 우승자 이름
+            winner_name = top_names[0]
+
+            threading.Timer(2.0, final_win_sound.play).start()
+
+            # 사운드 길이(초) 구해서, 우승자 효과 bgm 끝난 뒤 TTS 실행
+            threading.Timer(2.0 + final_win_sound.get_length(), speak_winner, args=[winner_name]).start()
+
             # (추가) 최종 우승자까지 결정됨
             draw_tournament_img_unified.final_ended = True
         elif top_scores[0] < top_scores[1]:
             top_colors[0] = RED
             top_colors[1] = GREEN
+            
+            # 우승자 이름
+            winner_name = top_names[1]
+
+            threading.Timer(2.0, final_win_sound.play).start()
+
+            # 사운드 길이(초) 구해서, 우승자 효과 bgm 끝난 뒤 TTS 실행
+            threading.Timer(2.0 + final_win_sound.get_length(), speak_winner, args=[winner_name]).start()
+
             # (추가) 최종 우승자까지 결정됨
             draw_tournament_img_unified.final_ended = True
         else:
@@ -961,7 +1097,7 @@ state_font_thickness = 2
 state_change_time = None
 
 stationary_start_time = None
-stationary_threshold = 2.0
+stationary_threshold = 1.0
 movement_threshold = 5
 last_position = None
 previous_bounce_time = None
@@ -1058,9 +1194,8 @@ while True:
                 if stationary_start_time is None:
                     stationary_start_time = time.time()
                 elif (time.time() - stationary_start_time) >= stationary_threshold:
-                    if in_rect_time >= 2.0 and current_state != "ready":
+                    if in_rect_time >= stationary_threshold and current_state != "ready":
                         current_state = "ready"
-                        ready_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\jihun_준비완료.mp3")
                         ready_sound.play()
                         state_change_time = time.time()
                         print("State changed to READY")
@@ -1185,7 +1320,7 @@ while True:
 
     # tracking 중에 공 안 보이면 -> waiting
     if current_state == "tracking":
-        if last_detection_time is not None and (time.time() - last_detection_time) >= 1.0:
+        if last_detection_time is not None and (time.time() - last_detection_time) >= 1.0: #1초 이상 공이 안보일때
             
             if bounce_count > 0:
                 bounce_history.append(bounce_count)
@@ -1197,7 +1332,7 @@ while True:
             consecutiveUpCount = 0
             state = None
             current_state = "waiting"
-            pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\alert-234711.mp3").play()
+            # alert_sound.play() # 공이 사라졌을때 효과음
             print("No detection for 1 second in TRACKING => bounce_count reset to 0, state changed to WAITING")
 
     # 그래프 데이터 길이 제한
@@ -1216,7 +1351,7 @@ while True:
             
             bounce_count = 0
             current_state = "waiting"
-            pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\alert-234711.mp3").play()
+            alert_sound.play() # 공이 사라졌을때 효과음
             consecutiveDownCount = 0
             consecutiveUpCount = 0
             state = None
@@ -1355,12 +1490,12 @@ while True:
             cv2.setWindowProperty("Combined", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
         else:
             cv2.setWindowProperty("Combined", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-
+        is_fullscreen_combined = not is_fullscreen_combined
+    elif key in [ord('b'), ord('B')]:
         if is_fullscreen_bounce:
             cv2.setWindowProperty("Bounce Count Window", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
         else:
             cv2.setWindowProperty("Bounce Count Window", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        is_fullscreen_combined = not is_fullscreen_combined
         is_fullscreen_bounce = not is_fullscreen_bounce
 
 # ----------------------------------------------------------------------------------------
