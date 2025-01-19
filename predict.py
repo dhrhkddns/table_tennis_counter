@@ -28,7 +28,21 @@ tap_notification_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping
 #공이 tracking 상태에서 나가거나 사라졌을때 (한 턴 종료)
 alert_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\alert-234711.mp3")
 #결승 승리 효과음
-final_win_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\level-win-6416.mp3")
+final_win_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\game-level-complete-143022.mp3")
+
+#100,200,300...1000 단위로 효과음 재생----------------------------------------------------------------------------------------
+hundred_unit_sounds = {
+    100: pygame.mixer.Sound(r"터르난도-100.mp3"),
+    200: pygame.mixer.Sound(r"터르난도-200.mp3"),
+    300: pygame.mixer.Sound(r"터르난도-300.mp3"),
+    400: pygame.mixer.Sound(r"터르난도-400.mp3"),
+    500: pygame.mixer.Sound(r"터르난도-500.mp3"),
+    600: pygame.mixer.Sound(r"터르난도-600.mp3"),
+    700: pygame.mixer.Sound(r"터르난도-700.mp3"),
+    800: pygame.mixer.Sound(r"터르난도-800.mp3"),
+    900: pygame.mixer.Sound(r"터르난도-900.mp3"),
+    1000: pygame.mixer.Sound(r"터르난도-1000.mp3"),
+}
 
 # [2] 전역 변수: 마스터 볼륨 & 효과음별 '상대 볼륨' (모두 1.0으로 초기화)
 master_volume = 1.0
@@ -39,6 +53,7 @@ rel_tap = 1.0
 rel_ready = 1.0
 rel_alert = 1.0
 rel_final_win = 1.0
+rel_hundred_units = 1.0 #100,200.. 성우 목소리
 
 def update_final_volumes():
     """
@@ -52,6 +67,8 @@ def update_final_volumes():
     alert_sound.set_volume(master_volume * rel_alert)
     final_win_sound.set_volume(master_volume * rel_final_win)
 
+    for sound in hundred_unit_sounds.values():
+        sound.set_volume(master_volume * rel_hundred_units)
 # 'Volume Control' 창과 Trackbar 콜백 함수 정의
 # [3] 트랙바 콜백 함수들
 # ------------------------------
@@ -95,6 +112,11 @@ def on_trackbar_final_win(val):
     rel_final_win = val / 100.0
     update_final_volumes()
 
+def on_trackbar_hundred_units(val):
+    global rel_hundred_units
+    rel_hundred_units = val / 100.0
+    update_final_volumes()
+
 # 새 창 생성
 cv2.namedWindow("Volume Control")
 
@@ -104,9 +126,10 @@ cv2.createTrackbar("Bounce1", "Volume Control", 20, 100, on_trackbar_bounce1)
 cv2.createTrackbar("Bounce10", "Volume Control", 35, 100, on_trackbar_bounce10)
 cv2.createTrackbar("Bounce100", "Volume Control", 40, 100, on_trackbar_bounce100)
 cv2.createTrackbar("Tap", "Volume Control", 80, 100, on_trackbar_tap)
-cv2.createTrackbar("Ready", "Volume Control", 70, 100, on_trackbar_ready)
+cv2.createTrackbar("Ready", "Volume Control", 65, 100, on_trackbar_ready)
 cv2.createTrackbar("Alert", "Volume Control", 40, 100, on_trackbar_alert)
-cv2.createTrackbar("FinalWin", "Volume Control", 70, 100, on_trackbar_final_win)
+cv2.createTrackbar("FinalWin", "Volume Control", 40, 100, on_trackbar_final_win)
+cv2.createTrackbar("HundredUnits", "Volume Control", 50, 100, on_trackbar_hundred_units)
 
 def speak_winner(name):
     """
@@ -114,8 +137,8 @@ def speak_winner(name):
     여기서는 lang='ko'로 하여 "A 우승!" 형태로 말하도록 했습니다.
     필요시 영어, 다른 문구 등으로 변경 가능.
     """
-    text = f"{name} win congratulations!"
-    tts = gTTS(text=text, lang='en')
+    text = f"{name} 우승!"
+    tts = gTTS(text=text, lang='ko')
     tts.save("winner.mp3")
     pygame.mixer.music.load("winner.mp3")
     pygame.mixer.music.play()
@@ -164,7 +187,7 @@ consecutiveUpCount = 0
 state = None
 DOWN_THRESHOLD = 2
 UP_THRESHOLD = 1
-PIXEL_THRESHOLD = 3.0
+PIXEL_THRESHOLD = 5.0
 last_y = None
 
 bounce_points = []
@@ -214,7 +237,9 @@ def get_color(count):
         color_index = len(color_sequence) - 1
 
     step_in_block = (count % 100) // 10
-    intensity = intensity_levels[step_in_block] if step_in_block < len(intensity_levels) else 1.0
+    intensity = 1.0
+    #10마다 밝아지고 싶으면 이거 쓰기
+    # intensity = intensity_levels[step_in_block] if step_in_block < len(intensity_levels) else 1.0
     base_color = color_sequence[color_index]
 
     color_bgr = np.uint8([[base_color]])
@@ -1133,7 +1158,7 @@ while True:
         fps = 1.0 / time_diff
     prev_time = current_time
 
-    results = model.predict(frame, imgsz=640, conf=0.5, max_det=1, show=False, device=0)
+    results = model.predict(frame, imgsz=640, conf=0.3, max_det=1, show=False, device=0)
     boxes = results[0].boxes
 
     x_values.append(frame_count)
@@ -1161,7 +1186,7 @@ while True:
         orange_pixels = cv2.countNonZero(mask_orange)
 
         if ignore_zero_orange:
-            if orange_pixels >= 5:
+            if orange_pixels >= 50:
                 detected = True
         else:
             detected = True
@@ -1218,14 +1243,18 @@ while True:
                                 state = "down"
                         elif state == "down":
                             if consecutiveUpCount >= UP_THRESHOLD:
+                                
                                 bounce_count += 1
                                 print("Bounce detected!")
+                                
                                 if sound_enabled:
-                                    if bounce_count % 100 == 0:
+                                    if bounce_count in hundred_unit_sounds: #100,200,300,400,500,600,700,800,900,1000
+                                        hundred_unit_sounds[bounce_count].play()
+                                    elif bounce_count % 100 == 0: #1100이후로 1200,1300,1400,1500...
                                         score_sound.play()
-                                    elif bounce_count % 10 == 0:
+                                    elif bounce_count % 10 == 0: #10,20,30,40,50,60,70,80,90,100
                                         collect_points_sound.play()
-                                    else:
+                                    else: #1,2,3,4,5,6,7,8,9..
                                         bounce_count_sound.play()
 
                                 bounce_points.append((x_values[-1], y_values[-1]))
