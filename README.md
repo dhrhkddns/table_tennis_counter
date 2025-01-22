@@ -1,3 +1,5 @@
+
+
 -스피커 싱크가 어떤거는 살짝 안맞기도 함.
 
 ![설정 2025-01-22 오후 9_27_15](https://github.com/user-attachments/assets/b5b1263c-6c79-4c8a-9229-493a353d634f)
