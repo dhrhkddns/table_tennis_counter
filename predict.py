@@ -131,6 +131,30 @@ cv2.createTrackbar("Alert", "Volume Control", 40, 100, on_trackbar_alert)
 cv2.createTrackbar("FinalWin", "Volume Control", 40, 100, on_trackbar_final_win)
 cv2.createTrackbar("HundredUnits", "Volume Control", 50, 100, on_trackbar_hundred_units)
 
+# [추가] 웹캠의 밝기, 대비, 채도를 조절할 수 있는 "Camera Control" 창 생성
+# ----------------------------------------------------------------------------------------
+def on_trackbar_brightness(val):
+    # val의 범위를 0~100으로 두고, 실제 값은 0~1 범위로 매핑하는 예시입니다.
+    cap.set(cv2.CAP_PROP_BRIGHTNESS, val / 100.0)
+
+def on_trackbar_contrast(val):
+    cap.set(cv2.CAP_PROP_CONTRAST, val / 100.0)
+
+def on_trackbar_saturation(val):
+    cap.set(cv2.CAP_PROP_SATURATION, val / 100.0)
+
+cv2.namedWindow("Camera Control")
+# # 초기값은 카메라에서 읽어오거나(지원할 경우) 기본 50%로 설정
+# init_brightness = int(cap.get(cv2.CAP_PROP_BRIGHTNESS) * 100) if cap.get(cv2.CAP_PROP_BRIGHTNESS) != 0 else 50
+# init_contrast = int(cap.get(cv2.CAP_PROP_CONTRAST) * 100) if cap.get(cv2.CAP_PROP_CONTRAST) != 0 else 50
+# init_saturation = int(cap.get(cv2.CAP_PROP_SATURATION) * 100) if cap.get(cv2.CAP_PROP_SATURATION) != 0 else 50
+
+cv2.createTrackbar("Brightness", "Camera Control", 50, 100, on_trackbar_brightness)
+cv2.createTrackbar("Contrast", "Camera Control", 50, 100, on_trackbar_contrast)
+cv2.createTrackbar("Saturation", "Camera Control", 50, 100, on_trackbar_saturation)
+
+
+
 def speak_winner(name):
     """
     우승자 이름을 gTTS로 발음해주는 간단한 함수 예시
@@ -149,7 +173,7 @@ def mouse_callback_volume(event, x, y, flags, param):
     if event == cv2.EVENT_MOUSEMOVE:
         last_mouse_move_time = time.time()
         if not mouse_visible:
-            user32.ShowCursor(True)
+            # user32.ShowCursor(True) #하고싶을때 조절
             mouse_visible = True
 
 
@@ -168,8 +192,9 @@ model.to("cuda")
 # ----------------------------------------------------------------------------------------
 # 3) 카메라 디바이스 연결
 # ----------------------------------------------------------------------------------------
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+cap = cv2.VideoCapture(3, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+
 
 # ----------------------------------------------------------------------------------------
 # 4) 그래프, 바운스 관련 전역 변수 정의
@@ -185,19 +210,19 @@ bounce_count = 0
 consecutiveDownCount = 0
 consecutiveUpCount = 0
 state = None
-DOWN_THRESHOLD = 2
+DOWN_THRESHOLD = 1
 UP_THRESHOLD = 1
-PIXEL_THRESHOLD = 5.0
+PIXEL_THRESHOLD = 2.0
 last_y = None
 
 bounce_points = []
 bounce_times = []
 
-CONTINUOUS_TIMEOUT = 1.2
+CONTINUOUS_TIMEOUT = 1.5
 current_bounce_time = None
 
 sound_enabled = True
-ignore_zero_orange = True
+ignore_zero_orange = True 
 
 button_rect = [500, 20, 120, 40]
 button_rect_ignore = [500, 70, 120, 40]
@@ -569,12 +594,40 @@ def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=No
         y_pt = int(y_ori / max_y * (height - 1))
         cv2.circle(graph_img, (x_pt, y_pt), 4, (255, 0, 0), -1)
 
-    for (bx_ori, by_ori) in bounce_pts:
+    # 여기서 bounce_pts를 순회하며 빨간 점 + 'LOW/MID/HIGH' 텍스트 표시
+    # -----------------------------
+    for (bx_ori, by_ori, btd) in bounce_pts:
         if bx_ori < x_data[0]:
             continue
+
+        # 그래프 좌표계로 매핑
         bx = int((bx_ori - x_data[0]) / (max_x - x_data[0] + 1e-6) * (width - 1))
         by = int(by_ori / max_y * (height - 1))
+
+        # 빨간 점
         cv2.circle(graph_img, (bx, by), 5, (0, 0, 255), -1)
+
+        # 바운스 간격에 따른 레이블
+        if btd is not None:
+            if btd < 0.38:
+                label = "LOW"
+            elif btd < 0.58:
+                label = "MIDDLE"
+            elif btd < 0.8:
+                label = "HIGH"
+            else:
+                label = "SUPER"
+            # 빨간 점 위로 텍스트 표시
+            cv2.putText(
+                graph_img,
+                label,
+                (bx + 5, by - 5),  # 점에서 약간 오른쪽/위로
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 255),
+                2,
+                cv2.LINE_AA
+            )
 
     # 사운드 ON/OFF 버튼
     cv2.rectangle(
@@ -1148,6 +1201,7 @@ while True:
             mouse_visible = False
 
     ret, frame = cap.read()
+    frame = cv2.flip(frame, 1) #좌우 반전으로 헷갈리지 않게 하기
     if not ret:
         print("No more frames or camera error.")
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -1178,6 +1232,8 @@ while True:
         x2i = min(frame.shape[1], x2i)
         y2i = min(frame.shape[0], y2i)
 
+        conf = boxes[0].conf.cpu().numpy()[0] #신뢰도
+
         roi = frame[y1i:y2i, x1i:x2i]
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         lower_orange = np.array([10, 100, 100], dtype=np.uint8)
@@ -1186,7 +1242,7 @@ while True:
         orange_pixels = cv2.countNonZero(mask_orange)
 
         if ignore_zero_orange:
-            if orange_pixels >= 50:
+            if orange_pixels >= 5:
                 detected = True
         else:
             detected = True
@@ -1206,6 +1262,13 @@ while True:
             if current_state == "ready":
                 if movement > movement_threshold:
                     current_state = "tracking"
+                    
+                    #테스트 (멀리서 공을 치고있을때 빨간색 사각형안에 들어간 상태에서 치게되면 오류발생 그래서 사각형 tracking때는 없에려 함.)
+                    drag_rect_x = 0
+                    drag_rect_y = 0
+                    drag_rect_w = 1
+                    drag_rect_h = 1 #거의 작게 해서 치는 중에 일정 시간이상 못들어가게 하려고
+
                     bounce_count = 0
                     bounce_points = []
                     bounce_times = []
@@ -1222,6 +1285,7 @@ while True:
                     if in_rect_time >= stationary_threshold and current_state != "ready":
                         current_state = "ready"
                         ready_sound.play()
+                        enlarged_view = 'tl' #트래킹 상태일때는 확대된 내 모습을 보기위해 범위파악을 위해서 자동 확대
                         state_change_time = time.time()
                         print("State changed to READY")
 
@@ -1257,16 +1321,24 @@ while True:
                                     else: #1,2,3,4,5,6,7,8,9..
                                         bounce_count_sound.play()
 
-                                bounce_points.append((x_values[-1], y_values[-1]))
+                                
                                 current_bounce_time = time.time()
                                 bounce_times.append(current_bounce_time)
 
+
+                                # [변경 후]
                                 if previous_bounce_time is not None:
                                     td = current_bounce_time - previous_bounce_time
-                                    print(f"Time diff between last two bounces: {td:.2f} s")
                                     bounce_time_diff = td
+                                    print(f"Time diff between last two bounces: {td:.2f} s")
+                                else:
+                                    bounce_time_diff = None
 
                                 previous_bounce_time = current_bounce_time
+
+                                # (x좌표, y좌표, 이번 바운스의 직전 바운스 대비 시간차)
+                                bounce_points.append((x_values[-1], y_values[-1], bounce_time_diff))
+
                                 state = "up"
                                 consecutiveDownCount = 0
                                 consecutiveUpCount = 0
@@ -1296,6 +1368,17 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
                 (0, 165, 255),
+                2,
+                cv2.LINE_AA
+            )
+
+            cv2.putText(
+                frame,
+                f"Conf: {conf:.2f}",
+                (x2i + 10, y1i + 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 0, 0),  # 파란색으로 설정
                 2,
                 cv2.LINE_AA
             )
@@ -1343,16 +1426,25 @@ while True:
 
     # ready 상태에서 공이 안 보이면 waiting으로
     if current_state == "ready":
-        if last_detection_time is not None and (time.time() - last_detection_time) > 1.0:
+        if last_detection_time is not None and (time.time() - last_detection_time) > 1.0: #1.0초 이상 공이 안보일때
             current_state = "waiting"
             print("State changed to WAITING (no detection for 1s in READY)")
 
     # tracking 중에 공 안 보이면 -> waiting
     if current_state == "tracking":
-        if last_detection_time is not None and (time.time() - last_detection_time) >= 1.0: #1초 이상 공이 안보일때
+        if last_detection_time is not None and (time.time() - last_detection_time) >= 1.5: #1.5초 이상 공이 안보일때
             
             if bounce_count > 0:
                 bounce_history.append(bounce_count)
+
+                #다시 없앤 리사이즈 사각형 원상복구 (준비 할수 있게)
+                drag_rect_x = 0
+                drag_rect_y = 0
+                drag_rect_w = 640
+                drag_rect_h = 200
+
+                # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
+                enlarged_view = 'br'
 
                 if len(bounce_history) > 14:
                     bounce_history.pop(0)
@@ -1372,9 +1464,18 @@ while True:
 
     # 바운스 간 일정 시간 지나면 초기화 (옵션)
     if current_bounce_time is not None:
-        if time.time() - current_bounce_time > CONTINUOUS_TIMEOUT:
+        if time.time() - current_bounce_time > CONTINUOUS_TIMEOUT: #가장 최근 바운스 이후로 1.5초 이상 지났을때
             if bounce_count > 0:
                 bounce_history.append(bounce_count)
+
+                #다시 없앤 리사이즈 사각형 원상복구 (준비 할수 있게)
+                drag_rect_x = 0
+                drag_rect_y = 0
+                drag_rect_w = 640
+                drag_rect_h = 200
+
+                # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
+                enlarged_view = 'br'
             if len(bounce_history) > 14:
                 bounce_history.pop(0)
             
