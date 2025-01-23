@@ -29,6 +29,8 @@ tap_notification_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping
 alert_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\alert-234711.mp3")
 #결승 승리 효과음
 final_win_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\game-level-complete-143022.mp3")
+#스테이지 클리어 효과음
+stage_clear_sound = pygame.mixer.Sound(r"clear.mp3")
 
 #100,200,300...1000 단위로 효과음 재생----------------------------------------------------------------------------------------
 hundred_unit_sounds = {
@@ -54,6 +56,7 @@ rel_ready = 1.0
 rel_alert = 1.0
 rel_final_win = 1.0
 rel_hundred_units = 1.0 #100,200.. 성우 목소리
+rel_stage_clear = 1.0
 
 def update_final_volumes():
     """
@@ -66,6 +69,7 @@ def update_final_volumes():
     ready_sound.set_volume(master_volume * rel_ready)
     alert_sound.set_volume(master_volume * rel_alert)
     final_win_sound.set_volume(master_volume * rel_final_win)
+    stage_clear_sound.set_volume(master_volume * rel_stage_clear)
 
     for sound in hundred_unit_sounds.values():
         sound.set_volume(master_volume * rel_hundred_units)
@@ -117,6 +121,11 @@ def on_trackbar_hundred_units(val):
     rel_hundred_units = val / 100.0
     update_final_volumes()
 
+def on_trackbar_stage_clear(val):
+    global rel_stage_clear
+    rel_stage_clear = val / 100.0
+    update_final_volumes()
+
 # 새 창 생성
 cv2.namedWindow("Volume Control")
 
@@ -131,17 +140,7 @@ cv2.createTrackbar("Alert", "Volume Control", 40, 100, on_trackbar_alert)
 cv2.createTrackbar("FinalWin", "Volume Control", 40, 100, on_trackbar_final_win)
 cv2.createTrackbar("HundredUnits", "Volume Control", 50, 100, on_trackbar_hundred_units)
 
-# [추가] 웹캠의 밝기, 대비, 채도를 조절할 수 있는 "Camera Control" 창 생성
-# ----------------------------------------------------------------------------------------
-def on_trackbar_brightness(val):
-    # val의 범위를 0~100으로 두고, 실제 값은 0~1 범위로 매핑하는 예시입니다.
-    cap.set(cv2.CAP_PROP_BRIGHTNESS, val / 100.0)
 
-def on_trackbar_contrast(val):
-    cap.set(cv2.CAP_PROP_CONTRAST, val / 100.0)
-
-def on_trackbar_saturation(val):
-    cap.set(cv2.CAP_PROP_SATURATION, val / 100.0)
 
 cv2.namedWindow("Camera Control")
 # # 초기값은 카메라에서 읽어오거나(지원할 경우) 기본 50%로 설정
@@ -149,9 +148,6 @@ cv2.namedWindow("Camera Control")
 # init_contrast = int(cap.get(cv2.CAP_PROP_CONTRAST) * 100) if cap.get(cv2.CAP_PROP_CONTRAST) != 0 else 50
 # init_saturation = int(cap.get(cv2.CAP_PROP_SATURATION) * 100) if cap.get(cv2.CAP_PROP_SATURATION) != 0 else 50
 
-cv2.createTrackbar("Brightness", "Camera Control", 50, 100, on_trackbar_brightness)
-cv2.createTrackbar("Contrast", "Camera Control", 50, 100, on_trackbar_contrast)
-cv2.createTrackbar("Saturation", "Camera Control", 50, 100, on_trackbar_saturation)
 
 
 
@@ -192,7 +188,7 @@ model.to("cuda")
 # ----------------------------------------------------------------------------------------
 # 3) 카메라 디바이스 연결
 # ----------------------------------------------------------------------------------------
-cap = cv2.VideoCapture(3, cv2.CAP_DSHOW)
+cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
 
@@ -611,12 +607,16 @@ def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=No
         if btd is not None:
             if btd < 0.38:
                 label = "LOW"
+                color = (0, 0, 255)  # 빨간색
             elif btd < 0.58:
                 label = "MIDDLE"
+                color = (0, 255, 255)  # 노란색
             elif btd < 0.8:
                 label = "HIGH"
+                color = (0, 165, 255)  # 주황색
             else:
                 label = "SUPER"
+                color = (255, 0, 255)  # 보라색
             # 빨간 점 위로 텍스트 표시
             cv2.putText(
                 graph_img,
@@ -624,7 +624,7 @@ def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=No
                 (bx + 5, by - 5),  # 점에서 약간 오른쪽/위로
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
-                (0, 0, 255),
+                color,
                 2,
                 cv2.LINE_AA
             )
@@ -1193,6 +1193,102 @@ bounce_history = []
 prev_time = time.time()
 fps = 0.0
 
+
+#싱글 플레이어 모드용 전역 변수
+#############################
+current_stage = 1
+stage_thresholds = [5, 10, 20, 30, 50, 100, 300, 500, 1000, 3000]
+# 싱글 모드 켜고 끄는 플래그(원하면)
+single_mode_enabled = True
+just_cleared_stage = False  # ★ 추가: 스테이지 클리어 직후 alert_sound를 막기 위한 플래그
+
+def handle_single_mode_stage():
+    global bounce_count, current_stage, current_state
+    global drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h
+    global just_cleared_stage   # ← 추가
+    
+    if current_stage > len(stage_thresholds):
+        return  # 이미 모든 스테이지 클리어한 상태
+
+    target = stage_thresholds[current_stage - 1]
+    if bounce_count >= target:
+        print(f"[싱글모드] Stage {current_stage} Clear! (목표={target}, 실제={bounce_count})")
+
+        stage_clear_sound.play()
+
+        # 1) 바운스 카운트 리셋
+        bounce_count = 0
+        # 2) 다음 스테이지로
+        current_stage += 1
+        # 3) 상태 강제 전환 → "waiting"
+        #    => 유저는 빨간 사각형에 공을 놓고 1초 대기해야 다시 "ready" 상태가 됨
+        just_cleared_stage = True
+        current_state = "waiting"
+
+        #끝났으니 원상복구
+        drag_rect_x = 0
+        drag_rect_y = 0
+        drag_rect_w = 640
+        drag_rect_h = 200 
+        
+
+
+
+def draw_single_player_mode(bounce_count, current_stage, width=640, height=480):
+    """
+    싱글 플레이어 모드 (1~10단계)를 시각적으로 표시
+    - current_stage: 현재 진행중인 스테이지 번호 (1~10)
+    - bounce_count: 현재 스테이지에서 누적된 바운스 개수
+    """
+    sp_img = np.zeros((height, width, 3), dtype=np.uint8)
+
+    cv2.putText(sp_img, "SINGLE PLAYER MODE", (20, 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.1, (255, 255, 255), 2)
+
+    total_stages = len(stage_thresholds)  # 10
+    box_w = 50
+    box_h = 50
+    margin = 5
+    total_w = box_w * total_stages + margin * (total_stages - 1)
+    start_x = (width - total_w) // 2
+    y_top = 120
+
+    for i in range(total_stages):
+        stage_num = i + 1
+        x_left = start_x + i * (box_w + margin)
+
+        if stage_num < current_stage:
+            # 이미 클리어한 단계
+            color = (0, 255, 0)    # 초록
+        elif stage_num == current_stage:
+            # 현재 도전 중
+            color = (0, 255, 255)  # 노랑
+        else:
+            # 아직 도달 못 한 단계
+            color = (180, 180, 180)  # 회색
+
+        cv2.rectangle(sp_img, (x_left, y_top), (x_left + box_w, y_top + box_h),
+                      color, -1)
+        cv2.rectangle(sp_img, (x_left, y_top), (x_left + box_w, y_top + box_h),
+                      (0, 0, 0), 2)
+
+        cv2.putText(sp_img, str(stage_num), (x_left+10, y_top+35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,0), 2)
+
+    # 이미 모든 스테이지(10단계) 끝나서 current_stage가 11 이상이면
+    if current_stage > total_stages:
+        cv2.putText(sp_img, "ALL CLEARED!!", (80, y_top + 100),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 215, 255), 3)
+    else:
+        # 아직 클리어 안 한 경우, 이번 스테이지 목표와 현재 카운트 표시
+        target = stage_thresholds[current_stage - 1]
+        msg = f"Stage {current_stage}: {bounce_count} / {target}"
+        cv2.putText(sp_img, msg, (20, height - 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+    return sp_img
+
+
 while True:
     now = time.time()
     if now - last_mouse_move_time > 3.0:
@@ -1285,7 +1381,7 @@ while True:
                     if in_rect_time >= stationary_threshold and current_state != "ready":
                         current_state = "ready"
                         ready_sound.play()
-                        enlarged_view = 'tl' #트래킹 상태일때는 확대된 내 모습을 보기위해 범위파악을 위해서 자동 확대
+                        # enlarged_view = 'tl' #트래킹 상태일때는 확대된 내 모습을 보기위해 범위파악을 위해서 자동 확대
                         state_change_time = time.time()
                         print("State changed to READY")
 
@@ -1308,8 +1404,12 @@ while True:
                         elif state == "down":
                             if consecutiveUpCount >= UP_THRESHOLD:
                                 
-                                bounce_count += 1
+                                bounce_count += 1 #내려갔다 올라옴.
                                 print("Bounce detected!")
+
+                                # === [싱글 플레이어 모드이면 처리] ===
+                                if single_mode_enabled:
+                                    handle_single_mode_stage()
                                 
                                 if sound_enabled:
                                     if bounce_count in hundred_unit_sounds: #100,200,300,400,500,600,700,800,900,1000
@@ -1395,18 +1495,18 @@ while True:
                     color = (0, 255, 255)  # 노란색
                 elif bounce_time_diff < 0.8:
                     label = "HIGH"
-                    color = (0, 255, 0)  # 초록색
+                    color = (0, 165, 255)  # 주황색
                 else:
                     label = "SUPER"
-                    color = (255, 0, 255)  # 마젠타색
+                    color = (255, 0, 255)  # 보라색
                     
                 # 레이블 표시 (공의 왼쪽에)
                 cv2.putText(
                     frame,
                     f"{label}",
-                    (x1i - 100, y1i + 30),  # 공의 왼쪽에 위치하도록 x좌표 조정
+                    (x1i - 150, y1i + 30),  # 공의 왼쪽에 위치하도록 x좌표 조정
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9,  # 글자 크기를 약간 키움
+                    1.2,  # 글자 크기를 약간 키움
                     color,
                     2,
                     cv2.LINE_AA
@@ -1492,13 +1592,19 @@ while True:
 
                 if len(bounce_history) > 14:
                     bounce_history.pop(0)
+            
             bounce_count = 0
             consecutiveDownCount = 0
             consecutiveUpCount = 0
             state = None
             current_state = "waiting"
-            # alert_sound.play() # 공이 사라졌을때 효과음
-            print("No detection for 1 second in TRACKING => bounce_count reset to 0, state changed to WAITING")
+
+            # ★ 변경점: 싱글 모드라면 current_stage = 1
+            if single_mode_enabled:
+                # 스테이지 실패 => 다시 1단계로
+                current_stage = 1
+
+            print("No detection => bounce_count reset to 0, go WAITING (fail => stage=1)")
 
     # 그래프 데이터 길이 제한
     if len(x_values) > MAX_POINTS:
@@ -1518,14 +1624,28 @@ while True:
                 drag_rect_w = 640
                 drag_rect_h = 200
 
-                # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
-                enlarged_view = 'br'
+                # # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
+                # enlarged_view = 'br'
             if len(bounce_history) > 14:
                 bounce_history.pop(0)
             
             bounce_count = 0
             current_state = "waiting"
-            alert_sound.play() # 공이 사라졌을때 효과음
+            
+
+            # ★ 수정
+            if just_cleared_stage:
+                # 방금 스테이지 클리어했는데 공을 놓치는 것은 '실패'가 아니라 '클리어 이후 자연스러운 종료'
+                # → stage=1로 돌리지 않음
+                just_cleared_stage = False  # 플래그만 해제하고 끝
+                print("No bounce (just cleared stage), so not resetting to stage 1.")
+            else:
+                alert_sound.play()
+                # 실제 실패(중도 탈락)인 경우만 stage=1로 돌아감
+                current_stage = 1
+                print("No bounce => waiting + alert_sound!")
+
+
             consecutiveDownCount = 0
             consecutiveUpCount = 0
             state = None
@@ -1618,12 +1738,18 @@ while True:
     # tournament_img(토너먼트 표시: "매 경기마다 즉시 승부")
     tournament_img = draw_tournament_img_unified(bounce_history, width=640, height=480)
 
+    # === [오른쪽 아래 br에 싱글모드 표시] ===
+    if single_mode_enabled:
+        single_player_img = draw_single_player_mode(bounce_count, current_stage, 640, 480)
+    else:
+        single_player_img = np.zeros((480, 640, 3), dtype=np.uint8)  # 빈 화면
+
     # 확대뷰가 없으면 4분할
     if enlarged_view is None:
         combined_img[0:480, 0:640] = frame_resized
         combined_img[0:480, 640:1280] = y_graph_img
         combined_img[480:960, 0:640] = orange_graph_img
-        combined_img[480:960, 640:1280] = tournament_img
+        combined_img[480:960, 640:1280] = single_player_img #잠시 싱글 플레이어로 테스트
     else:
         if enlarged_view == 'tl':
             big_view = cv2.resize(frame_resized, (1280, 960), interpolation=cv2.INTER_AREA)
@@ -1635,7 +1761,7 @@ while True:
             big_view = cv2.resize(orange_graph_img, (1280, 960), interpolation=cv2.INTER_AREA)
             combined_img = big_view
         elif enlarged_view == 'br':
-            big_view = cv2.resize(tournament_img, (1280, 960), interpolation=cv2.INTER_AREA)
+            big_view = cv2.resize(single_player_img, (1280, 960), interpolation=cv2.INTER_AREA)
             combined_img = big_view
 
     cv2.imshow("Combined", combined_img)
