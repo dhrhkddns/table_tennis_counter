@@ -1382,6 +1382,50 @@ while True:
                 2,
                 cv2.LINE_AA
             )
+
+            # 바운스 간격에 따른 레이블 표시 추가
+            # ----------------------------------------------------------------------------------------
+            if bounce_time_diff is not None:
+                # 바운스 간격에 따른 레이블 결정
+                if bounce_time_diff < 0.38:
+                    label = "LOW"
+                    color = (0, 0, 255)  # 빨간색
+                elif bounce_time_diff < 0.58:
+                    label = "MIDDLE"
+                    color = (0, 255, 255)  # 노란색
+                elif bounce_time_diff < 0.8:
+                    label = "HIGH"
+                    color = (0, 255, 0)  # 초록색
+                else:
+                    label = "SUPER"
+                    color = (255, 0, 255)  # 마젠타색
+                    
+                # 레이블 표시 (공의 왼쪽에)
+                cv2.putText(
+                    frame,
+                    f"{label}",
+                    (x1i - 100, y1i + 30),  # 공의 왼쪽에 위치하도록 x좌표 조정
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,  # 글자 크기를 약간 키움
+                    color,
+                    2,
+                    cv2.LINE_AA
+                )
+                
+                # 시간 간격도 함께 표시 (레이블 아래에)
+                cv2.putText(
+                    frame,
+                    f"{bounce_time_diff:.2f}s",
+                    (x1i - 100, y1i + 60),  # 레이블 아래에 위치
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    color,
+                    2,
+                    cv2.LINE_AA
+                )
+
+
+
         else:
             y_values.append(None)
             orange_pixel_values.append(None)
