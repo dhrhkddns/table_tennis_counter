@@ -47,3 +47,13 @@ https://github.com/user-attachments/assets/1e34558e-639d-42d1-b98b-b72000bafc64
 
 https://github.com/user-attachments/assets/1ceb9769-e8b9-4c84-a8cf-a78e7988e6fb
 
+상대적인 공간 기하학적 조정 없이
+
+그냥 조커에서
+
+특정 위치 안에 공의 궤적중 한점이 포함되면 추가점수 주도록
+
+(이러면 사각형을 임의로 생기게 해야함 사라지는것도)
+
+혹은 공의 각도가 수평을 유지하면 주는 조커도...
+
