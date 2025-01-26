@@ -8,13 +8,75 @@ import pygame
 from PIL import Image, ImageFont, ImageDraw
 from gtts import gTTS
 import playsound
+import random
 
+
+#마우스 커서 숨기는데 관여하는 변수
 user32 = ctypes.windll.user32
+
+#초기화 함수
+def reset_all_states():
+    global bounce_count
+    global bounce_points, bounce_times
+    global previous_bounce_time, state
+    global consecutiveDownCount, consecutiveUpCount
+    global ball_in_rect_start, in_rect_time
+    global current_state
+    global x_values, y_values, orange_pixel_values
+    global single_mode_state, active_jokers, chosen_jokers
+    global current_stage, total_score, bounce_sequence, consecutive_low_bounces
+    global just_cleared_stage
+    global drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h
+    global bounce_history
+    global prev_bounce_count, prev_total_score
+
+    # 1) 바운스, 그래프 관련
+    bounce_count = 0
+    bounce_points.clear()
+    bounce_times.clear()
+    previous_bounce_time = None
+    state = None
+    consecutiveDownCount = 0
+    consecutiveUpCount = 0
+
+    # 2) 사각형 & in_rect_time
+    ball_in_rect_start = None
+    in_rect_time = 0.0
+    drag_rect_x = 0
+    drag_rect_y = 0
+    drag_rect_w = 640
+    drag_rect_h = 200
+
+    # 3) 현재 상태 (waiting 등)
+    current_state = "waiting"
+
+    # 4) 그래프 데이터 (원하면 clear)
+    x_values.clear()
+    y_values.clear()
+    orange_pixel_values.clear()
+
+    # 5) 싱글 모드 변수들
+    single_mode_state = "playing"
+    active_jokers.clear()
+    chosen_jokers.clear()
+    current_stage = 1
+    total_score = 0
+    bounce_sequence.clear()
+    consecutive_low_bounces = 0
+    just_cleared_stage = False
+    prev_total_score = -1
+
+    # 6) 토너먼트 기록
+    bounce_history.clear()
+    prev_bounce_count = -1
+
+    print("All states have been reset!")
+
 
 # ----------------------------------------------------------------------------------------
 # 1) pygame 오디오 초기화 및 사운드 로드
 # ----------------------------------------------------------------------------------------
-pygame.mixer.init()
+pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=128)
 #공이 준비사각형에 일정시간 있었을때 효과음
 ready_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\jihun_준비완료.mp3")
 #1단위 바운스 효과음
@@ -31,6 +93,8 @@ alert_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\alert
 final_win_sound = pygame.mixer.Sound(r"C:\Users\omyra\Desktop\coding\ping_pong\game-level-complete-143022.mp3")
 #스테이지 클리어 효과음
 stage_clear_sound = pygame.mixer.Sound(r"clear.mp3")
+#조커 효과 발동 효과음
+joker_sound = pygame.mixer.Sound(r"joker.mp3")
 
 #100,200,300...1000 단위로 효과음 재생----------------------------------------------------------------------------------------
 hundred_unit_sounds = {
@@ -142,7 +206,7 @@ cv2.createTrackbar("HundredUnits", "Volume Control", 50, 100, on_trackbar_hundre
 
 
 
-cv2.namedWindow("Camera Control")
+# cv2.namedWindow("Camera Control")
 # # 초기값은 카메라에서 읽어오거나(지원할 경우) 기본 50%로 설정
 # init_brightness = int(cap.get(cv2.CAP_PROP_BRIGHTNESS) * 100) if cap.get(cv2.CAP_PROP_BRIGHTNESS) != 0 else 50
 # init_contrast = int(cap.get(cv2.CAP_PROP_CONTRAST) * 100) if cap.get(cv2.CAP_PROP_CONTRAST) != 0 else 50
@@ -188,7 +252,7 @@ model.to("cuda")
 # ----------------------------------------------------------------------------------------
 # 3) 카메라 디바이스 연결
 # ----------------------------------------------------------------------------------------
-cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
 
@@ -227,9 +291,14 @@ button_rect_ignore = [500, 70, 120, 40]
 current_camera_index = 0
 webcam_button_rects = []
 
-FONT_PATH = r"C:\Users\omyra\Desktop\coding\ping_pong\Digital Display.ttf"
+#점수 표시
+DIGITAL_NUMBER_FONT_PATH = r"C:\Users\omyra\Desktop\coding\ping_pong\Digital Display.ttf"
+HANDWRITING_FONT_PATH = r"SpoqaHanSansNeo_TTF_original\SpoqaHanSansNeo-Medium.ttf"
+
 FONT_SIZE = 400
-font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
+
+digital_font = ImageFont.truetype(DIGITAL_NUMBER_FONT_PATH, FONT_SIZE)
+handwriting_font = ImageFont.truetype(HANDWRITING_FONT_PATH, 450)
 
 color_sequence = [
     (255, 255, 255),  # 흰색
@@ -317,6 +386,7 @@ def mouse_callback(event, x, y, flags, param):
     global resizing_corner
     global enlarged_view
     global current_camera_index, cap
+    global single_mode_state, chosen_jokers, active_jokers
 
     if event == cv2.EVENT_MOUSEMOVE:
         last_mouse_move_time = time.time()
@@ -524,6 +594,31 @@ def mouse_callback(event, x, y, flags, param):
         else:
             print(f"Return to 4-split from: {enlarged_view}")
             enlarged_view = None
+    
+    # ↓ 우하단 single_player_img 영역 클릭 처리
+    if 640 <= x < 1280 and 480 <= y < 960:
+        local_x = x - 640
+        local_y = y - 480
+
+        if single_mode_state == "choosing_joker" and event == cv2.EVENT_LBUTTONDOWN:
+            # 첫 번째 박스 클릭
+            if (50 <= local_x <= 290) and (200 <= local_y <= 300):
+                active_jokers.append(chosen_jokers[0]["id"])
+                single_mode_state = "playing"
+                print(f"Chose Joker: {chosen_jokers[0]['id']}")
+                chosen_jokers = []  # ★ 이 위치에서만 실행 (실제로 첫 번째 박스를 골랐을 때)
+                drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h = 0, 0, 640, 200 #조커 선택후 다시 준비할 수 있게 영역 만들기
+
+            # 두 번째 박스 클릭
+            elif (350 <= local_x <= 590) and (200 <= local_y <= 300):
+                active_jokers.append(chosen_jokers[1]["id"])
+                single_mode_state = "playing"
+                print(f"Chose Joker: {chosen_jokers[1]['id']}")
+                chosen_jokers = []  # ★ 이 위치에서만 실행 (실제로 두 번째 박스를 골랐을 때)
+                drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h = 0, 0, 640, 200 #조커 선택후 다시 준비할 수 있게 영역 만들기
+
+            # ※ else: 박스 범위 밖 클릭 시에는 아무 것도 안 하고 return (혹은 pass)
+
 
 
 
@@ -533,23 +628,30 @@ def mouse_callback(event, x, y, flags, param):
 # ----------------------------------------------------------------------------------------
 def render_text_with_ttf(
     text,
-    font=font,
+    font,
     text_color=(255, 255, 255),
     bg_color=(0, 0, 0),
-    width=960,
-    height=540
+    width=1920,
+    height=1080
 ):
+    # 1) 배경용 Pillow 이미지 생성
     img_pil = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(img_pil)
 
-    text_bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = text_bbox[2] - text_bbox[0]
-    text_h = text_bbox[3] - text_bbox[1]
+    # 2) 텍스트 바운딩박스 구하기
+    left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+    text_w = right - left
+    text_h = bottom - top
 
-    text_x = (width - text_w) // 2
-    text_y = (height - text_h) // 2
+    # 3) 바운딩박스를 기준으로 정확히 가운데 오도록 위치 계산
+    #   - 가운데 정렬 지점에서 (left, top)을 빼서 보정
+    text_x = (width - text_w) // 2 - left
+    text_y = (height - text_h) // 2 - top
+
+    # 4) 텍스트 그리기
     draw.text((text_x, text_y), text, font=font, fill=text_color)
 
+    # 5) NumPy 배열로 변환 후 OpenCV용 BGR로 변경
     img_np = np.array(img_pil)
     img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
     return img_bgr
@@ -605,13 +707,13 @@ def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=No
 
         # 바운스 간격에 따른 레이블
         if btd is not None:
-            if btd < 0.38:
+            if btd <= BOUNCE_THRESHOLDS["LOW"]:
                 label = "LOW"
                 color = (0, 0, 255)  # 빨간색
-            elif btd < 0.58:
+            elif btd < BOUNCE_THRESHOLDS["MIDDLE"]:
                 label = "MIDDLE"
                 color = (0, 255, 255)  # 노란색
-            elif btd < 0.8:
+            elif btd < BOUNCE_THRESHOLDS["HIGH"]:
                 label = "HIGH"
                 color = (0, 165, 255)  # 주황색
             else:
@@ -1193,59 +1295,194 @@ bounce_history = []
 prev_time = time.time()
 fps = 0.0
 
-
+#############################
 #싱글 플레이어 모드용 전역 변수
 #############################
+# ----------------------------------------------------------------------------------------
+# 바운스 기준값을 위한 전역 구성
+# ----------------------------------------------------------------------------------------
+BOUNCE_THRESHOLDS = {
+    "LOW": 0.33,
+    "MIDDLE": 0.58,
+    "HIGH": 0.80
+    # "SUPER"는 HIGH 기준값 이상을 의미하므로 별도로 정의할 필요 없음
+}
+
+# 조커(Joker) 관련 전역
+# -----------------------
+#전체 조커 후보 정의 (원하는 만큼)
+all_jokers = [
+    {
+        "id": "JOKER_LOW_10",
+        "title": "JOKER_LOW_10",
+        "desc": "LOW 10x => +10"
+    },
+    {
+        "id": "JOKER_LMHS_50",
+        "title": "JOKER_LMHS_50",
+        "desc": "L->M->H->S => +50"
+    },
+    {
+        "id": "JOKER_SUPER_3",
+        "title": "JOKER_SUPER_3",
+        "desc": "SUPER 3x => +30"
+    }
+    # ... 필요한 조커를 더 추가
+]
+# '스테이지 클리어후 선택지 2개 조커'를 저장할 전역 변수
+chosen_jokers = []
+active_jokers = []         # 현재 내가 가진 활성화된 조커들 (예: ["JOKER_LOW_10", "JOKER_LMHS_50"])
+
+play_mode = "single"  # 싱글 모드 플래그
+bounce_sequence = []  # 바운스 타입("LOW"/"MIDDLE"/"HIGH"/"SUPER")을 순서대로 기록
+consecutive_low_bounces = 0
 current_stage = 1
 stage_thresholds = [5, 10, 20, 30, 50, 100, 300, 500, 1000, 3000]
-# 싱글 모드 켜고 끄는 플래그(원하면)
-single_mode_enabled = True
+single_mode_state = "playing"   # 또는 "choosing_joker"
 just_cleared_stage = False  # ★ 추가: 스테이지 클리어 직후 alert_sound를 막기 위한 플래그
+total_score = 0    # 조커 효과로 얻는 추가 점수만 누적
+#싱글 모드 점수 변경 여부를 체크할 변수
+prev_total_score = None  # total_score와 비교하기 위함 (매 프레임마다 pil로 렌더링하면 부하가 많이옴, 그래서 점수가 바뀔때만 렌더링 진행)
 
 def handle_single_mode_stage():
     global bounce_count, current_stage, current_state
     global drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h
-    global just_cleared_stage   # ← 추가
-    
+    global just_cleared_stage
+    global single_mode_state
+    global total_score, bounce_sequence
+
     if current_stage > len(stage_thresholds):
-        return  # 이미 모든 스테이지 클리어한 상태
+        return  # 이미 모든 스테이지 클리어
 
     target = stage_thresholds[current_stage - 1]
-    if bounce_count >= target:
-        print(f"[싱글모드] Stage {current_stage} Clear! (목표={target}, 실제={bounce_count})")
+
+    # ---- "조커 점수"가 목표를 넘으면 클리어 ----
+    if total_score >= target:
+        print(f"[싱글모드] Stage {current_stage} Clear! (목표={target}, 점수={total_score})")
 
         stage_clear_sound.play()
 
-        # 1) 바운스 카운트 리셋
+        # 1) 바운스 카운트, 조커 점수, 바운스 시퀀스 초기화
         bounce_count = 0
-        # 2) 다음 스테이지로
+        total_score = 0
+        bounce_sequence = []
+
+        # 2) 다음 스테이지
         current_stage += 1
-        # 3) 상태 강제 전환 → "waiting"
-        #    => 유저는 빨간 사각형에 공을 놓고 1초 대기해야 다시 "ready" 상태가 됨
+
+        # 3) 상태: waiting
         just_cleared_stage = True
         current_state = "waiting"
 
-        #끝났으니 원상복구
+        # 조커 선택 모드로 전환
+        single_mode_state = "choosing_joker"
+
+
+        # #끝났으니 원상복구
         drag_rect_x = 0
         drag_rect_y = 0
-        drag_rect_w = 640
-        drag_rect_h = 200 
-        
+        drag_rect_w = 1
+        drag_rect_h = 1
 
 
-
-def draw_single_player_mode(bounce_count, current_stage, width=640, height=480):
+def apply_jokers_on_bounce(bounce_type):
     """
-    싱글 플레이어 모드 (1~10단계)를 시각적으로 표시
-    - current_stage: 현재 진행중인 스테이지 번호 (1~10)
-    - bounce_count: 현재 스테이지에서 누적된 바운스 개수
+    매 바운스가 일어날 때마다 호출:
+    - bounce_sequence에 bounce_type을 기록
+    - 활성화된 조커들을 확인하여 조건 만족 시 total_score += 가산
     """
+    global bounce_sequence
+    global consecutive_low_bounces
+    global active_jokers
+    global total_score
+
+    #1) 기본 점수 1점 가산
+    total_score += 1
+    
+    # 2) 바운스 타입 기록
+    if bounce_type is not None:
+        bounce_sequence.append(bounce_type)
+
+    print(bounce_sequence)
+
+
+    print(f"total score:{total_score}")
+    print(f"active jokers:{active_jokers}")
+    # 2) "JOKER_LOW_10": LOW를 10번 연속 시 +10점 (1회성)
+    if "JOKER_LOW_10" in active_jokers:
+        if bounce_type == "LOW":
+            consecutive_low_bounces += 1
+        else:
+            consecutive_low_bounces = 0
+
+        if consecutive_low_bounces >= 10:
+            total_score += 10
+            joker_sound.play() #조커 효과 발동 효과음
+            print("[JOKER_LOW_10] LOW 10연속 달성! +10점 획득")
+            consecutive_low_bounces = 0
+            active_jokers.remove("JOKER_LOW_10")  # 1회성이면 remove 사용
+
+    # 3) "JOKER_LMHS_50": 직전 4바운스가 [LOW,MIDDLE,HIGH,SUPER]면 +50점
+    if "JOKER_LMHS_50" in active_jokers:
+        if len(bounce_sequence) >= 4:
+            last4 = bounce_sequence[-4:]
+            if last4 == ["LOW", "MIDDLE", "HIGH", "SUPER"]:
+                total_score += 50
+                joker_sound.play() #조커 효과 발동 효과음
+                print("[JOKER_LMHS_50] LOW→MIDDLE→HIGH→SUPER! +50점 획득")
+                # 여러 번 발동 가능하게 유지한다면 제거 안 함
+                # 한 번만 발동할거라면 아래 코드 추가:
+                active_jokers.remove("JOKER_LMHS_50")
+    
+    # 4) "JOKER_SUPER_3": SUPER를 3번 연속 시 +30점 (1회성)
+    if "JOKER_SUPER_3" in active_jokers:
+        if len(bounce_sequence) >= 3:
+            # 마지막으로 조커가 발동된 위치를 추적하기 위한 변수 추가
+            if not hasattr(apply_jokers_on_bounce, "last_super3_index"):
+                apply_jokers_on_bounce.last_super3_index = -1
+            
+            # 마지막 발동 이후의 시퀀스만 검사
+            start_idx = apply_jokers_on_bounce.last_super3_index + 1
+            check_sequence = bounce_sequence[start_idx:]
+            
+            if len(check_sequence) >= 3:
+                last3 = check_sequence[-3:]
+                if last3 == ["SUPER", "SUPER", "SUPER"]:
+                    total_score += 30
+                    joker_sound.play() #조커 효과 발동 효과음
+                    print("[JOKER_SUPER_3] SUPER 3연속 달성! +30점 획득")
+                    # 마지막 발동 위치 업데이트
+                    apply_jokers_on_bounce.last_super3_index = len(bounce_sequence) - 1
+                    active_jokers.remove("JOKER_SUPER_3")  # 1회성이므로 제거
+
+
+
+def draw_single_player_mode(
+    bounce_count,
+    current_stage,
+    single_mode_state="playing",  # "playing" or "choosing_joker"
+    width=640,
+    height=480
+):
+    """
+    싱글 플레이어 모드 (1~10단계) UI를 그리는 함수.
+    - current_stage: 현재 스테이지 번호
+    - bounce_count: 현재 스테이지에서의 바운스 횟수
+    - single_mode_state: "playing"이면 일반 스테이지 표시, "choosing_joker"면 조커 선택 박스 표시
+    - width, height: 리턴할 이미지 크기
+    """
+
+    global chosen_jokers
+
     sp_img = np.zeros((height, width, 3), dtype=np.uint8)
 
+    # ----------------------------
+    # 1) 기본 싱글 플레이 모드 표시
+    # ----------------------------
     cv2.putText(sp_img, "SINGLE PLAYER MODE", (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.1, (255, 255, 255), 2)
 
-    total_stages = len(stage_thresholds)  # 10
+    total_stages = len(stage_thresholds)  # 예: 10
     box_w = 50
     box_h = 50
     margin = 5
@@ -1273,28 +1510,68 @@ def draw_single_player_mode(bounce_count, current_stage, width=640, height=480):
                       (0, 0, 0), 2)
 
         cv2.putText(sp_img, str(stage_num), (x_left+10, y_top+35),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,0), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
 
-    # 이미 모든 스테이지(10단계) 끝나서 current_stage가 11 이상이면
+    # 모든 스테이지 클리어한 경우 메시지
     if current_stage > total_stages:
         cv2.putText(sp_img, "ALL CLEARED!!", (80, y_top + 100),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 215, 255), 3)
     else:
-        # 아직 클리어 안 한 경우, 이번 스테이지 목표와 현재 카운트 표시
+        # 아직 클리어 안 한 경우, 이번 스테이지 목표와 현재 바운스 표시
         target = stage_thresholds[current_stage - 1]
-        msg = f"Stage {current_stage}: {bounce_count} / {target}"
+        msg = f"Stage {current_stage}: {total_score} / {target}"
         cv2.putText(sp_img, msg, (20, height - 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+    # ----------------------------
+    # 2) 조커 선택 모드라면, 오버레이 UI 추가
+    # ----------------------------
+    if single_mode_state == "choosing_joker":
+        
+        if len(chosen_jokers) < 2:
+            chosen_jokers = random.sample(all_jokers, 2)
+        
+        overlay = sp_img.copy()
+        
+        # 전체 반투명 배경
+        cv2.rectangle(overlay, (0, 0), (width, height), (50, 50, 50), -1)
+        alpha = 0.6
+        sp_img = cv2.addWeighted(overlay, alpha, sp_img, 1 - alpha, 0)
+
+        cv2.putText(sp_img, "Choose a Joker!", (150, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+
+        # 첫 번째 박스(왼쪽)
+        (x1, y1, x2, y2) = (50, 200, 290, 300)
+        cv2.rectangle(sp_img, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+        # chosen_jokers[0]의 title, desc 표시
+        joker0 = chosen_jokers[0]
+        cv2.putText(sp_img, joker0["title"], (x1+10, y1+40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(sp_img, joker0["desc"], (x1+10, y1+80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # 두 번째 박스(오른쪽)
+        (x1b, y1b, x2b, y2b) = (350, 200, 590, 300)
+        cv2.rectangle(sp_img, (x1b, y1b), (x2b, y2b), (255, 255, 255), 2)
+
+        joker1 = chosen_jokers[1]
+        cv2.putText(sp_img, joker1["title"], (x1b+10, y1b+40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(sp_img, joker1["desc"], (x1b+10, y1b+80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
     return sp_img
 
 
+
 while True:
     now = time.time()
-    if now - last_mouse_move_time > 3.0:
-        if mouse_visible:
-            user32.ShowCursor(False)
-            mouse_visible = False
+    # if now - last_mouse_move_time > 3.0:
+    #     if mouse_visible:
+    #         user32.ShowCursor(False)
+    #         mouse_visible = False
 
     ret, frame = cap.read()
     frame = cv2.flip(frame, 1) #좌우 반전으로 헷갈리지 않게 하기
@@ -1308,7 +1585,7 @@ while True:
         fps = 1.0 / time_diff
     prev_time = current_time
 
-    results = model.predict(frame, imgsz=640, conf=0.3, max_det=1, show=False, device=0)
+    results = model.predict(frame, imgsz=640, conf=0.3, max_det=1, show=False, device=0,verbose=False)
     boxes = results[0].boxes
 
     x_values.append(frame_count)
@@ -1407,19 +1684,49 @@ while True:
                                 bounce_count += 1 #내려갔다 올라옴.
                                 print("Bounce detected!")
 
+                                # 1) 바운스 타입 구하기
+                                if bounce_time_diff is not None:
+                                    if bounce_time_diff <= BOUNCE_THRESHOLDS["LOW"]:
+                                        bounce_type = "LOW"
+                                    elif bounce_time_diff < BOUNCE_THRESHOLDS["MIDDLE"]:
+                                        bounce_type = "MIDDLE"
+                                    elif bounce_time_diff < BOUNCE_THRESHOLDS["HIGH"]:
+                                        bounce_type = "HIGH"
+                                    else:
+                                        bounce_type = "SUPER"
+                                else:
+                                    bounce_type = None
+
+
+
                                 # === [싱글 플레이어 모드이면 처리] ===
-                                if single_mode_enabled:
+                                if play_mode == "single":
+                                    #조커 적용 (한 번만)
+                                    apply_jokers_on_bounce(bounce_type)
                                     handle_single_mode_stage()
                                 
+
+
+                                
                                 if sound_enabled:
-                                    if bounce_count in hundred_unit_sounds: #100,200,300,400,500,600,700,800,900,1000
-                                        hundred_unit_sounds[bounce_count].play()
-                                    elif bounce_count % 100 == 0: #1100이후로 1200,1300,1400,1500...
-                                        score_sound.play()
-                                    elif bounce_count % 10 == 0: #10,20,30,40,50,60,70,80,90,100
-                                        collect_points_sound.play()
-                                    else: #1,2,3,4,5,6,7,8,9..
-                                        bounce_count_sound.play()
+                                    if play_mode == "tournament":
+                                        if bounce_count in hundred_unit_sounds: #100,200,300,400,500,600,700,800,900,1000
+                                            hundred_unit_sounds[bounce_count].play()
+                                        elif bounce_count % 100 == 0: #1100이후로 1200,1300,1400,1500...
+                                            score_sound.play()
+                                        elif bounce_count % 10 == 0: #10,20,30,40,50,60,70,80,90,100
+                                            collect_points_sound.play()
+                                        else: #1,2,3,4,5,6,7,8,9..
+                                            bounce_count_sound.play()
+                                    elif play_mode == "single":
+                                        if total_score in hundred_unit_sounds: #100,200,300,400,500,600,700,800,900,1000
+                                            hundred_unit_sounds[total_score].play()
+                                        elif total_score % 100 == 0: #1100이후로 1200,1300,1400,1500...
+                                            score_sound.play()
+                                        elif total_score % 10 == 0: #10,20,30,40,50,60,70,80,90,100
+                                            collect_points_sound.play()
+                                        else: #1,2,3,4,5,6,7,8,9..
+                                            bounce_count_sound.play()
 
                                 
                                 current_bounce_time = time.time()
@@ -1487,18 +1794,20 @@ while True:
             # ----------------------------------------------------------------------------------------
             if bounce_time_diff is not None:
                 # 바운스 간격에 따른 레이블 결정
-                if bounce_time_diff < 0.38:
+                if bounce_time_diff <= BOUNCE_THRESHOLDS["LOW"]:
                     label = "LOW"
                     color = (0, 0, 255)  # 빨간색
-                elif bounce_time_diff < 0.58:
+                elif bounce_time_diff < BOUNCE_THRESHOLDS["MIDDLE"]:
                     label = "MIDDLE"
                     color = (0, 255, 255)  # 노란색
-                elif bounce_time_diff < 0.8:
+                elif bounce_time_diff < BOUNCE_THRESHOLDS["HIGH"]:
                     label = "HIGH"
                     color = (0, 165, 255)  # 주황색
                 else:
                     label = "SUPER"
                     color = (255, 0, 255)  # 보라색
+
+
                     
                 # 레이블 표시 (공의 왼쪽에)
                 cv2.putText(
@@ -1598,11 +1907,26 @@ while True:
             consecutiveUpCount = 0
             state = None
             current_state = "waiting"
+            
+            
 
-            # ★ 변경점: 싱글 모드라면 current_stage = 1
-            if single_mode_enabled:
-                # 스테이지 실패 => 다시 1단계로
-                current_stage = 1
+            # ★ 수정
+            if just_cleared_stage:
+                # 방금 스테이지 클리어했는데 공을 놓치는 것은 '실패'가 아니라 '클리어 이후 자연스러운 종료'
+                # → stage=1로 돌리지 않음
+                just_cleared_stage = False  # 플래그만 해제하고 끝
+                print("No bounce (just cleared stage), so not resetting to stage 1.")
+            else:
+                alert_sound.play()
+                # 실제 실패(중도 탈락)인 경우만 stage=1로 돌아감
+                if play_mode == 'single':
+                    # 스테이지 실패 => 다시 1단계로
+                    current_stage = 1
+                    bounce_sequence = []
+                    total_score = 0 
+                    active_jokers.clear()  # 게임 오버시 조커 목록도 비움!
+                print("No bounce => waiting + alert_sound!")
+                
 
             print("No detection => bounce_count reset to 0, go WAITING (fail => stage=1)")
 
@@ -1642,7 +1966,12 @@ while True:
             else:
                 alert_sound.play()
                 # 실제 실패(중도 탈락)인 경우만 stage=1로 돌아감
-                current_stage = 1
+                if play_mode == 'single':
+                    # 스테이지 실패 => 다시 1단계로
+                    current_stage = 1
+                    bounce_sequence = []
+                    total_score = 0 
+                    active_jokers.clear()  # 게임 오버시 조커 목록도 비움!
                 print("No bounce => waiting + alert_sound!")
 
 
@@ -1654,6 +1983,8 @@ while True:
             bounce_times = []
             previous_bounce_time = None
             print("No bounce for a while -> reset bounce_count to 0")
+
+
 
     # ------------------ Combined 화면 구성 ------------------
     combined_img = np.zeros((960, 1280, 3), dtype=np.uint8)
@@ -1735,21 +2066,28 @@ while True:
         x_values, orange_pixel_values, width=640, height=480, max_y=max_orange
     )
 
-    # tournament_img(토너먼트 표시: "매 경기마다 즉시 승부")
-    tournament_img = draw_tournament_img_unified(bounce_history, width=640, height=480)
+    if play_mode == "tournament":
+        # 토너먼트 모드에서는 bottom-right에 토너먼트 이미지를 표시
+        tournament_img = draw_tournament_img_unified(bounce_history, width=640, height=480)
+        combined_img[480:960, 640:1280] = tournament_img
+    elif play_mode == "single":
+        # 싱글 모드
+        single_player_img = draw_single_player_mode(
+            bounce_count,
+            current_stage,
+            single_mode_state,
+            width=640,
+            height=480
+        )
+        combined_img[480:960, 640:1280] = single_player_img
 
-    # === [오른쪽 아래 br에 싱글모드 표시] ===
-    if single_mode_enabled:
-        single_player_img = draw_single_player_mode(bounce_count, current_stage, 640, 480)
-    else:
-        single_player_img = np.zeros((480, 640, 3), dtype=np.uint8)  # 빈 화면
 
     # 확대뷰가 없으면 4분할
     if enlarged_view is None:
         combined_img[0:480, 0:640] = frame_resized
         combined_img[0:480, 640:1280] = y_graph_img
         combined_img[480:960, 0:640] = orange_graph_img
-        combined_img[480:960, 640:1280] = single_player_img #잠시 싱글 플레이어로 테스트
+        # combined_img[480:960, 640:1280] = single_player_img #이건 조건에 따라서 해당 ㅗㅁ드로  테스트
     else:
         if enlarged_view == 'tl':
             big_view = cv2.resize(frame_resized, (1280, 960), interpolation=cv2.INTER_AREA)
@@ -1761,23 +2099,48 @@ while True:
             big_view = cv2.resize(orange_graph_img, (1280, 960), interpolation=cv2.INTER_AREA)
             combined_img = big_view
         elif enlarged_view == 'br':
-            big_view = cv2.resize(single_player_img, (1280, 960), interpolation=cv2.INTER_AREA)
+            if play_mode == "tournament":
+                big_view = cv2.resize(tournament_img, (1280, 960), interpolation=cv2.INTER_AREA)
+            elif play_mode == "single":  # single mode
+                big_view = cv2.resize(single_player_img, (1280, 960), interpolation=cv2.INTER_AREA)
             combined_img = big_view
 
     cv2.imshow("Combined", combined_img)
 
-    # 바운스 카운트 창
-    if bounce_count != prev_bounce_count:
-        color = get_color(bounce_count)
-        bounce_img = render_text_with_ttf(
-            text=str(bounce_count),
-            font=font,
-            text_color=color,
-            bg_color=(0, 0, 0),
-            width=960,
-            height=540
-        )
-        prev_bounce_count = bounce_count
+    # ----------------------------------------------------------------------------
+    ##수정: "Bounce Count Window"는 싱글도 토너먼트도 모드별로 값이 바뀔 때만 재렌더링
+    if play_mode == 'single':
+        # single 모드 => total_score/target 표시
+        if current_stage <= len(stage_thresholds):
+            target = stage_thresholds[current_stage - 1]
+        else:
+            target = 99999  # 혹은 다른 값
+        # total_score 값이 **바뀌었을 때만** bounce_img를 새로 만든다
+        if prev_total_score != total_score:
+            display_value = f"{total_score}/{target}"
+            # 예시: 흰 글자, 검정 배경
+            bounce_img = render_text_with_ttf(
+                text=display_value,
+                font=handwriting_font,
+                text_color=(255, 255, 255),
+                bg_color=(0, 0, 255),
+                width=1920,
+                height=1080
+            )
+            prev_total_score = total_score
+    elif play_mode == "tournament":
+        # 기존 로직 (싱글 모드가 아닐 때)
+        if bounce_count != prev_bounce_count:
+            color = get_color(bounce_count)
+            bounce_img = render_text_with_ttf(
+                text=str(bounce_count),
+                font=digital_font,
+                text_color=color,
+                bg_color=(0, 0, 0),
+                width=960,
+                height=540
+            )
+            prev_bounce_count = bounce_count
 
     if bounce_img is not None:
         cv2.imshow("Bounce Count Window", bounce_img)
@@ -1785,6 +2148,18 @@ while True:
     key = cv2.waitKey(1) & 0xFF
     if key == 27:  # ESC
         break
+    elif key == ord('t') or key == ord('T'):
+        reset_all_states()
+        # 모드 토글
+        play_mode = 'tournament'
+        
+
+    elif key == ord('s') or key == ord('S'):
+        reset_all_states()
+        # 싱글 모드로 전환
+        play_mode = 'single'
+
+
     elif key in [ord('f'), ord('F')]:
         if is_fullscreen_combined:
             cv2.setWindowProperty("Combined", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
