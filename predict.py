@@ -110,7 +110,7 @@ def reset_all_states():
     # 6) 토너먼트 기록
     bounce_history.clear()
     prev_bounce_count = -1
-
+    draw_tournament_img_unified.previous_bounce_history_len = -1  # 이전 기록 초기화
     print("All states have been reset!")
 
 
@@ -335,11 +335,12 @@ webcam_button_rects = []
 #점수 표시
 DIGITAL_NUMBER_FONT_PATH = r"C:\Users\omyra\Desktop\coding\ping_pong\Digital Display.ttf"
 HANDWRITING_FONT_PATH = r"SpoqaHanSansNeo_TTF_original\SpoqaHanSansNeo-Medium.ttf"
-
+KOREAN_FONT_PATH = r"나눔손글씨_배은혜체.ttf"
 FONT_SIZE = 400
 
 digital_font = ImageFont.truetype(DIGITAL_NUMBER_FONT_PATH, FONT_SIZE)
 handwriting_font = ImageFont.truetype(HANDWRITING_FONT_PATH, 450)
+korean_font = ImageFont.truetype(KOREAN_FONT_PATH, 30)
 
 color_sequence = [
     (255, 255, 255),  # 흰색
@@ -408,9 +409,6 @@ MISSING_FRAMES_THRESHOLD = 5
 # ----------------------------------------------------------------------------------------
 enlarged_view = None
 
-#8강 토너먼트 리셋 버튼(오른쪽 상단) 좌표 저장
-# ----------------------------------------------------------------------------------------
-reset_button_rect_tournament = (0, 0, 0, 0)  # (x1, y1, x2, y2)를 저장할 전역 변수
 
 
 # ----------------------------------------------------------------------------------------
@@ -569,8 +567,9 @@ def mouse_callback(event, x, y, flags, param):
                     # [★ 토너먼트 다시 시작: 초기화 작업들]
                     draw_tournament_img_unified.final_ended = False
                     draw_tournament_img_unified.final_bracket = None
+                    draw_tournament_img_unified.previous_bounce_history_len = -1  # 이전 기록 초기화
                     bounce_history.clear()
-
+                    
                     # 원하면 bounce_count나 상태도 초기화
                     # (예: current_state = "waiting")
                     # (예: bounce_count = 0)
@@ -921,7 +920,7 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
     """
     
     global reset_button_rect_tournament  # 여기서 전역 변수에 접근
-
+    
     # ----------------------------------------------------------------------------
     # [★ 추가] 함수 스코프 밖에서도 상태를 기억하기 위한 정적(Static) 변수 설정
     # ----------------------------------------------------------------------------
@@ -930,6 +929,8 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
         draw_tournament_img_unified.final_ended = False    # 이미 우승자가 결정되었는지 여부
     if not hasattr(draw_tournament_img_unified, "final_bracket"):
         draw_tournament_img_unified.final_bracket = None   # 확정된(우승자까지 나온) 토너먼트 이미지
+    if not hasattr(draw_tournament_img_unified, "previous_bounce_history_len"):
+        draw_tournament_img_unified.previous_bounce_history_len = -1  # 초기값 설정
 
 
 
@@ -943,8 +944,43 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
         return draw_tournament_img_unified.final_bracket
 
     # --------------------------------------------------------------------------------
-    # [B] 헬퍼 함수들 (draw_text_centered, draw_square_with_text, draw_row_of_squares)
+    # [B] 한글 표기 토너먼트 참가자 이름 함수 (draw_text_centered, draw_square_with_text, draw_row_of_squares)
     # --------------------------------------------------------------------------------
+    # ... existing code ...
+    def draw_pil_text_centered(
+        img,
+        text,   #이름이 여기로 들어옴.
+        center_x,
+        center_y,
+        font=cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale=0.5,
+        color=(255, 255, 255),
+        thickness=1
+    ):
+        """
+        전달받은 이미지(img)의 (center_x, center_y)에 텍스트를 중앙정렬로 그려주는 함수
+        """
+        # OpenCV 이미지를 PIL 이미지로 변환
+        img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(img_pil)
+        
+        
+        # 텍스트 크기 측정
+        bbox = draw.textbbox((0, 0), text, font=korean_font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        
+        # 중앙 정렬 위치 계산
+        text_x = center_x - text_w // 2
+        text_y = center_y - text_h // 2
+        
+        #  참가자 이름 텍스트 그리기 pil이용 대신 프레임 떨어져서 프레임마다 호출하면 안되고 값바뀔때만 호출
+        draw.text((text_x, text_y - 10), text, font=korean_font, fill=color[::-1])  # RGB -> BGR
+        
+        # PIL 이미지를 다시 OpenCV 이미지로 변환 '바로' 주어진 이미지를 변환
+        cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR, dst=img)
+# ... existing code ...
+ 
     def draw_text_centered(
         img,
         text,
@@ -962,6 +998,8 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
         text_org_x = center_x - text_w // 2
         text_org_y = center_y + text_h // 2
         cv2.putText(img, text, (text_org_x, text_org_y), font, font_scale, color, thickness, cv2.LINE_AA)
+    
+    
 
     def draw_square_with_text(
         img,
@@ -989,7 +1027,7 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
         # 이름 텍스트(상단)
         name_center_x = x + w // 2
         name_center_y = y + 20
-        draw_text_centered(
+        draw_pil_text_centered(
             img,
             name_text,
             name_center_x,
@@ -1134,6 +1172,7 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
 
     winners_4 = ["", "", "", ""]
 
+    # [D-1] 8강
     for j in range(4):  # 4쌍
         i1 = 2*j
         i2 = 2*j + 1
@@ -1153,13 +1192,12 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
                 if len(bounce_history) >= 2:
                     bounce_history.pop()
                     bounce_history.pop()
-                # 아직 결승 확정 전이므로 final_ended = False 유지
-                return _draw_bracket_boxes(
-                    graph_img,
-                    bottom_names, bottom_scores, bottom_colors,
-                    winners_4, [0, 0, 0, 0], [None]*4,
-                    ["",""], [0, 0], [None, None]
-                )
+                
+                # 동점 처리 - bounce_history는 수정하지 않고, 현재 상태만 표시
+                bottom_scores[i1] = 0  
+                bottom_scores[i2] = 0  
+
+                winners_4[j] = ""  # 승자 미정
 
     # [D-2] 4강
     middle_names  = winners_4[:]
@@ -1191,12 +1229,12 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
                 if len(bounce_history) >= 2:
                     bounce_history.pop()
                     bounce_history.pop()
-                return _draw_bracket_boxes(
-                    graph_img,
-                    bottom_names, bottom_scores, bottom_colors,
-                    middle_names, middle_scores, middle_colors,
-                    ["",""], [0, 0], [None, None]
-                )
+
+                # 동점 처리
+                middle_scores[i1] = 0
+                middle_scores[i2] = 0
+
+                winners_2[j] = ""
 
     # [D-3] 결승(2강)
     top_names  = winners_2[:]
@@ -1241,12 +1279,13 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
             if len(bounce_history) >= 2:
                 bounce_history.pop()
                 bounce_history.pop()
-            return _draw_bracket_boxes(
-                graph_img,
-                bottom_names, bottom_scores, bottom_colors,
-                middle_names, middle_scores, middle_colors,
-                top_names, top_scores, top_colors
-            )
+
+            # 동점 발생 시, 해당 플레이어들의 점수를 0으로 설정
+            top_scores[0] = 0
+            top_scores[1] = 0
+
+
+            # 동점이므로 승자 처리 로직은 실행하지 않음
 
     # 여기까지 정상적으로 내려왔다면, 결승까지 점수 반영이 완료된 상태
     # 만약 두_count == 2라면 우승자 결정 (final_ended = True)
@@ -1330,7 +1369,14 @@ bounce_time_diff = None
 
 # 토너먼트 모드 표시용 바운스 기록(=각 사람의 점수). 최대 14개면 8강+4강+2강 모두 가능.
 bounce_history = []
-tournament_players_8 = ["A","B","C","D","E","F","G","H"]
+tournament_players_8 = ["광운","성찬","명현","이차","법인장","이건희","애플","삼성"]
+#8강 토너먼트 리셋 버튼(오른쪽 상단) 좌표 저장
+# ----------------------------------------------------------------------------------------
+reset_button_rect_tournament = (0, 0, 0, 0)  # (x1, y1, x2, y2)를 저장할 전역 변수
+# 토너먼트 메인 루프 안에서 초기 그리고 bounce_history가 바뀔때마다만 렌더링 함으로써 PIL이미지 시각화를 필요할때만 함으로서 프레임 부하 줄인다.
+# 루프 시작 전에 초기 tournament_img 생성
+tournament_img = draw_tournament_img_unified(bounce_history, width=640, height=480)
+draw_tournament_img_unified.previous_bounce_history_len = len(bounce_history)
 
 # ----------------------------------------------------------------------------------------
 # 15) 메인 루프
@@ -2230,6 +2276,12 @@ while True:
     if current_state == "ready":
         if last_detection_time is not None and (time.time() - last_detection_time) > 1.0: #1.0초 이상 공이 안보일때
             current_state = "waiting"
+
+            #다시 없앤 리사이즈 사각형 원상복구 (준비 할수 있게)
+            drag_rect_x = 0
+            drag_rect_y = 0
+            drag_rect_w = 640
+            drag_rect_h = 200
             print("State changed to WAITING (no detection for 1s in READY)")
 
     # tracking 중에 공 안 보이면 -> waiting
@@ -2239,17 +2291,19 @@ while True:
             if bounce_count > 0:
                 bounce_history.append(bounce_count)
 
-                #다시 없앤 리사이즈 사각형 원상복구 (준비 할수 있게)
-                drag_rect_x = 0
-                drag_rect_y = 0
-                drag_rect_w = 640
-                drag_rect_h = 200
-
-                # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
-                enlarged_view = 'br'
-
                 if len(bounce_history) > 14:
                     bounce_history.pop(0)
+
+            #다시 없앤 리사이즈 사각형 원상복구 (준비 할수 있게)
+            drag_rect_x = 0
+            drag_rect_y = 0
+            drag_rect_w = 640
+            drag_rect_h = 200
+
+                # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
+                # enlarged_view = 'br'
+
+
             
             bounce_count = 0
             consecutiveDownCount = 0
@@ -2291,19 +2345,21 @@ while True:
     # 바운스 간 일정 시간 지나면 초기화 (옵션)
     if current_bounce_time is not None:
         if time.time() - current_bounce_time > CONTINUOUS_TIMEOUT: #가장 최근 바운스 이후로 1.5초 이상 지났을때
+            
             if bounce_count > 0:
                 bounce_history.append(bounce_count)
 
-                #다시 없앤 리사이즈 사각형 원상복구 (준비 할수 있게)
-                drag_rect_x = 0
-                drag_rect_y = 0
-                drag_rect_w = 640
-                drag_rect_h = 200
+                if len(bounce_history) > 14:
+                    bounce_history.pop(0)
+            #다시 없앤 리사이즈 사각형 원상복구 (준비 할수 있게)
+            drag_rect_x = 0
+            drag_rect_y = 0
+            drag_rect_w = 640
+            drag_rect_h = 200
 
                 # # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
                 # enlarged_view = 'br'
-            if len(bounce_history) > 14:
-                bounce_history.pop(0)
+
             
             bounce_count = 0
             current_state = "waiting"
@@ -2423,7 +2479,10 @@ while True:
 
     if play_mode == "tournament":
         # 토너먼트 모드에서는 bottom-right에 토너먼트 이미지를 표시
-        tournament_img = draw_tournament_img_unified(bounce_history, width=640, height=480)
+        # bounce_history 길이가 변경되었을 때만 tournament_img 업데이트
+        if len(bounce_history) != draw_tournament_img_unified.previous_bounce_history_len:
+            tournament_img = draw_tournament_img_unified(bounce_history, width=640, height=480)
+            draw_tournament_img_unified.previous_bounce_history_len = len(bounce_history)
         combined_img[480:960, 640:1280] = tournament_img
     elif play_mode == "single":
         # 싱글 모드
