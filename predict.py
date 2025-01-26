@@ -9,7 +9,49 @@ from PIL import Image, ImageFont, ImageDraw
 from gtts import gTTS
 import playsound
 import random
+import sys
+from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout,
+                             QLabel, QLineEdit, QPushButton)
 
+def pyqt_text_input_mode(prompt="8강 이름을 입력 (띄어쓰기 구분)"):
+    """
+    PyQt 다이얼로그를 모달로 띄워서, 사용자에게 문자열 입력을 받는 간단한 예시 함수.
+    - return: 사용자가 OK를 누르거나 엔터를 누를 때의 입력 문자열
+              (취소 시에는 빈 문자열 "")
+    """
+    app = QApplication(sys.argv)  # PyQt 앱 생성
+
+    dialog = QDialog()
+    dialog.setWindowTitle("Enter 8 Names")
+    dialog.resize(400, 150)
+
+    layout = QVBoxLayout(dialog)
+
+    label = QLabel(prompt, dialog)
+    layout.addWidget(label)
+
+    line_edit = QLineEdit(dialog)
+    layout.addWidget(line_edit)
+
+    button_ok = QPushButton("OK", dialog)
+    layout.addWidget(button_ok)
+
+    def on_ok_clicked():
+        dialog.accept()  # 다이얼로그 닫고 accept() 상태로 종료
+
+    button_ok.clicked.connect(on_ok_clicked)
+
+    # 엔터로도 OK 누른 것처럼 처리
+    line_edit.returnPressed.connect(on_ok_clicked)
+
+    dialog.setLayout(layout)
+
+    # 모달 실행 -> user가 닫거나 OK누를 때까지 블록
+    result = dialog.exec_()
+    if result == QDialog.Accepted:
+        return line_edit.text().strip()
+    else:
+        return ""  # 취소/닫기 시 빈 문자열
 
 #마우스 커서 숨기는데 관여하는 변수
 user32 = ctypes.windll.user32
@@ -24,7 +66,7 @@ def reset_all_states():
     global current_state
     global x_values, y_values, orange_pixel_values
     global single_mode_state, active_jokers, chosen_jokers
-    global current_stage, total_score, bounce_sequence, consecutive_low_bounces
+    global current_stage, total_score, bounce_sequence
     global just_cleared_stage
     global drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h
     global bounce_history
@@ -62,7 +104,6 @@ def reset_all_states():
     current_stage = 1
     total_score = 0
     bounce_sequence.clear()
-    consecutive_low_bounces = 0
     just_cleared_stage = False
     prev_total_score = -1
 
@@ -602,7 +643,7 @@ def mouse_callback(event, x, y, flags, param):
 
         if single_mode_state == "choosing_joker" and event == cv2.EVENT_LBUTTONDOWN:
             # 첫 번째 박스 클릭
-            if (50 <= local_x <= 290) and (200 <= local_y <= 300):
+            if (50 <= local_x <= 240) and (200 <= local_y <= 400):
                 active_jokers.append(chosen_jokers[0]["id"])
                 single_mode_state = "playing"
                 print(f"Chose Joker: {chosen_jokers[0]['id']}")
@@ -610,7 +651,7 @@ def mouse_callback(event, x, y, flags, param):
                 drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h = 0, 0, 640, 200 #조커 선택후 다시 준비할 수 있게 영역 만들기
 
             # 두 번째 박스 클릭
-            elif (350 <= local_x <= 590) and (200 <= local_y <= 300):
+            elif (350 <= local_x <= 540) and (200 <= local_y <= 400):
                 active_jokers.append(chosen_jokers[1]["id"])
                 single_mode_state = "playing"
                 print(f"Chose Joker: {chosen_jokers[1]['id']}")
@@ -1082,7 +1123,8 @@ def draw_tournament_img_unified(bounce_history, width=640, height=480):
     graph_img = np.zeros((height, width, 3), dtype=np.uint8)
 
     # [D-1] 8강
-    bottom_names  = ["A", "B", "C", "D", "E", "F", "G", "H"]
+    # 이제 bottom_names 대신 tournament_players_8을 사용
+    bottom_names = tournament_players_8 
     bottom_scores = [0]*8
     bottom_colors = [None]*8
 
@@ -1286,8 +1328,9 @@ last_detection_time = None
 
 bounce_time_diff = None
 
-# (추가) 토너먼트 표시용 바운스 기록(=각 사람의 점수). 최대 14개면 8강+4강+2강 모두 가능.
+# 토너먼트 모드 표시용 바운스 기록(=각 사람의 점수). 최대 14개면 8강+4강+2강 모두 가능.
 bounce_history = []
+tournament_players_8 = ["A","B","C","D","E","F","G","H"]
 
 # ----------------------------------------------------------------------------------------
 # 15) 메인 루프
@@ -1312,9 +1355,10 @@ BOUNCE_THRESHOLDS = {
 # -----------------------
 #전체 조커 후보 정의 (원하는 만큼)
 all_jokers = [
+    # Already used 3 examples
     {
         "id": "JOKER_LOW_10",
-        "title": "JOKER_LOW_10",
+        "title": "JOKER_LOW_10", 
         "desc": "LOW 10x => +10"
     },
     {
@@ -1326,16 +1370,110 @@ all_jokers = [
         "id": "JOKER_SUPER_3",
         "title": "JOKER_SUPER_3",
         "desc": "SUPER 3x => +30"
+    },
+
+    # --------------------
+    # 20 new examples added below
+    # --------------------
+
+    {
+        "id": "JOKER_EASY_ANY_10",
+        "title": "Any 10 Bounces",
+        "desc": "Get +10 points for any 10 bounces"
+    },
+    {
+        "id": "JOKER_EASY_LOW_3",
+        "title": "Low 3 Bounces",
+        "desc": "Get +4 points for 3 LOW bounces (non-consecutive)"
+    },
+    {
+        "id": "JOKER_EASY_LOW_5",
+        "title": "Low 5 Bounces",
+        "desc": "Get +7 points for 5 LOW bounces (non-consecutive)"
+    },
+    {
+        "id": "JOKER_EASY_MID_3",
+        "title": "Middle 3 Bounces",
+        "desc": "Get +5 points for 3 MIDDLE bounces"
+    },
+    {
+        "id": "JOKER_EASY_MID_5",
+        "title": "Middle 5 Bounces",
+        "desc": "Get +8 points for 5 MIDDLE bounces"
+    },
+    {
+        "id": "JOKER_EASY_HIGH_2",
+        "title": "High 2 Bounces",
+        "desc": "Get +5 points for 2 HIGH bounces"
+    },
+    {
+        "id": "JOKER_EASY_HIGH_5",
+        "title": "High 5 Bounces",
+        "desc": "Get +10 points for 5 HIGH bounces"
+    },
+    {
+        "id": "JOKER_EASY_SUPER_1",
+        "title": "Super 1 Bounce",
+        "desc": "Get +5 points for 1 SUPER bounce"
+    },
+    {
+        "id": "JOKER_EASY_SUPER_2",
+        "title": "Super 2 Bounces",
+        "desc": "Get +10 points for 2 SUPER bounces"
+    },
+    {
+        "id": "JOKER_EASY_LOW_STREAK_3",
+        "title": "Low 3x Streak",
+        "desc": "Get +6 points for 3 consecutive LOW bounces"
+    },
+    {
+        "id": "JOKER_EASY_MID_STREAK_2",
+        "title": "Middle 2x Streak",
+        "desc": "Get +5 points for 2 consecutive MIDDLE bounces"
+    },
+    {
+        "id": "JOKER_EASY_HIGH_STREAK_2",
+        "title": "High 2x Streak",
+        "desc": "Get +6 points for 2 consecutive HIGH bounces"
+    },
+    {
+        "id": "JOKER_EASY_SUPER_STREAK_2",
+        "title": "Super Streak",
+        "desc": "Get +15 points for 2 consecutive SUPER bounces"
+    },
+    {
+        "id": "JOKER_EASY_LOHI",
+        "title": "Low-High Sequence",
+        "desc": "Get +8 points for consecutive LOW -> HIGH sequence"
+    },
+    {
+        "id": "JOKER_EASY_MIHISU",
+        "title": "Middle-High-Super Sequence",
+        "desc": "Get +15 points for consecutive MIDDLE -> HIGH -> SUPER sequence"
+    },
+    {
+        "id": "JOKER_EASY_LMH_ANY",
+        "title": "Low-Mid-High in any order",
+        "desc": "Get +12 points for at least one LOW, MIDDLE, HIGH (any order)"
+    },
+    {
+        "id": "JOKER_EASY_VARIETY_4",
+        "title": "4 Types Variety",
+        "desc": "Get +20 points for at least one of each: LOW, MIDDLE, HIGH, SUPER"
+    },
+    {
+        "id": "JOKER_EASY_NO_FAIL_10",
+        "title": "10 Bounces No Fail",
+        "desc": "Get +10 points for 10 consecutive bounces without dropping"
     }
-    # ... 필요한 조커를 더 추가
 ]
+
 # '스테이지 클리어후 선택지 2개 조커'를 저장할 전역 변수
 chosen_jokers = []
 active_jokers = []         # 현재 내가 가진 활성화된 조커들 (예: ["JOKER_LOW_10", "JOKER_LMHS_50"])
 
 play_mode = "single"  # 싱글 모드 플래그
 bounce_sequence = []  # 바운스 타입("LOW"/"MIDDLE"/"HIGH"/"SUPER")을 순서대로 기록
-consecutive_low_bounces = 0
 current_stage = 1
 stage_thresholds = [5, 10, 20, 30, 50, 100, 300, 500, 1000, 3000]
 single_mode_state = "playing"   # 또는 "choosing_joker"
@@ -1343,6 +1481,20 @@ just_cleared_stage = False  # ★ 추가: 스테이지 클리어 직후 alert_so
 total_score = 0    # 조커 효과로 얻는 추가 점수만 누적
 #싱글 모드 점수 변경 여부를 체크할 변수
 prev_total_score = None  # total_score와 비교하기 위함 (매 프레임마다 pil로 렌더링하면 부하가 많이옴, 그래서 점수가 바뀔때만 렌더링 진행)
+
+# 새로 만드는 전역 카운터 예시
+count_any = 0              # 아무 바운스 유형이든 누적 횟수
+count_low = 0
+count_mid = 0
+count_high = 0
+count_super = 0
+
+consecutive_low = 0
+consecutive_mid = 0
+consecutive_high = 0
+consecutive_super = 0
+
+no_fail_streak = 0         # 연속으로 공을 놓치지 않고 성공한 바운스 횟수
 
 def handle_single_mode_stage():
     global bounce_count, current_stage, current_state
@@ -1387,19 +1539,29 @@ def handle_single_mode_stage():
 
 def apply_jokers_on_bounce(bounce_type):
     """
-    매 바운스가 일어날 때마다 호출:
-    - bounce_sequence에 bounce_type을 기록
-    - 활성화된 조커들을 확인하여 조건 만족 시 total_score += 가산
+    매 바운스가 일어날 때마다 호출되는 함수.
+    - bounce_type: "LOW", "MIDDLE", "HIGH", "SUPER" 중 하나 (혹은 None)
+    - 1) 기본 점수 +1
+    - 2) 바운스 종류별 누적/연속 카운터 갱신
+    - 3) active_jokers에 있는 조커들을 전부 검사하여 조건 충족 시 보상 부여(+점수) 후 제거
     """
+
     global bounce_sequence
-    global consecutive_low_bounces
-    global active_jokers
-    global total_score
+    global total_score, active_jokers
+    global consecutive_low, consecutive_mid, consecutive_high, consecutive_super
+    global count_any, count_low, count_mid, count_high, count_super
+    global no_fail_streak
 
     #1) 기본 점수 1점 가산
     total_score += 1
     
-    # 2) 바운스 타입 기록
+    # ---------------------------
+    # 2) 누적/연속 카운터 갱신
+    # ---------------------------
+    # 전체 바운스(아무 유형)
+    count_any += 1
+    no_fail_streak += 1  # 공 놓치지 않았으므로 +1
+
     if bounce_type is not None:
         bounce_sequence.append(bounce_type)
 
@@ -1408,21 +1570,104 @@ def apply_jokers_on_bounce(bounce_type):
 
     print(f"total score:{total_score}")
     print(f"active jokers:{active_jokers}")
-    # 2) "JOKER_LOW_10": LOW를 10번 연속 시 +10점 (1회성)
+
+    # 연속/누적 카운터 업데이트
+    if bounce_type == "LOW":
+        count_low += 1
+        consecutive_low += 1
+        # 다른 유형 연속은 끊김
+        consecutive_mid = 0
+        consecutive_high = 0
+        consecutive_super = 0
+    elif bounce_type == "MIDDLE":
+        count_mid += 1
+        consecutive_mid += 1
+        consecutive_low = 0
+        consecutive_high = 0
+        consecutive_super = 0
+    elif bounce_type == "HIGH":
+        count_high += 1
+        consecutive_high += 1
+        consecutive_low = 0
+        consecutive_mid = 0
+        consecutive_super = 0
+    elif bounce_type == "SUPER":
+        count_super += 1
+        consecutive_super += 1
+        consecutive_low = 0
+        consecutive_mid = 0
+        consecutive_high = 0
+    else:
+        # bounce_type이 None이라면 별도 처리는 생략
+        pass
+
+
+    # ---------------------------
+    # 3) 조커 발동 체크
+    # ---------------------------
+    
+    # 1) JOKER_LOW_10 (이미 기존에 있던 것: LOW 10연속 시 +10, 1회성)
     if "JOKER_LOW_10" in active_jokers:
-        if bounce_type == "LOW":
-            consecutive_low_bounces += 1
-        else:
-            consecutive_low_bounces = 0
-
-        if consecutive_low_bounces >= 10:
+        if consecutive_low >= 10:
             total_score += 10
-            joker_sound.play() #조커 효과 발동 효과음
+            joker_sound.play()
             print("[JOKER_LOW_10] LOW 10연속 달성! +10점 획득")
-            consecutive_low_bounces = 0
-            active_jokers.remove("JOKER_LOW_10")  # 1회성이면 remove 사용
+            active_jokers.remove("JOKER_LOW_10")
+            consecutive_low = 0  # 달성 후 연속 카운터 리셋
 
-    # 3) "JOKER_LMHS_50": 직전 4바운스가 [LOW,MIDDLE,HIGH,SUPER]면 +50점
+
+
+    
+    if "JOKER_SUPER_3" in active_jokers:
+        if consecutive_super >= 3:
+            total_score += 30
+            joker_sound.play()
+            print("[JOKER_SUPER_3] SUPER 3연속 달성! +30점 획득")
+            active_jokers.remove("JOKER_SUPER_3")
+            consecutive_super = 0
+    
+    # 2) JOKER_EASY_LOW_STREAK_3 => LOW 3회 연속 => +6
+    if "JOKER_EASY_LOW_STREAK_3" in active_jokers:
+        if consecutive_low >= 3:
+            total_score += 6
+            joker_sound.play()
+            print("[JOKER_EASY_LOW_STREAK_3] LOW 3연속 달성! +6점 획득")
+            active_jokers.remove("JOKER_EASY_LOW_STREAK_3")
+            consecutive_low = 0
+
+        # 3) JOKER_EASY_MID_STREAK_2 => MIDDLE 2회 연속 => +5
+    if "JOKER_EASY_MID_STREAK_2" in active_jokers:
+        if consecutive_mid >= 2:
+            total_score += 5
+            joker_sound.play()
+            print("[JOKER_EASY_MID_STREAK_2] MIDDLE 2연속 달성! +5점 획득")
+            active_jokers.remove("JOKER_EASY_MID_STREAK_2")
+            consecutive_mid = 0
+
+    # 4) JOKER_EASY_HIGH_STREAK_2 => HIGH 2회 연속 => +6
+    if "JOKER_EASY_HIGH_STREAK_2" in active_jokers:
+        if consecutive_high >= 2:
+            total_score += 6
+            joker_sound.play()
+            print("[JOKER_EASY_HIGH_STREAK_2] HIGH 2연속 달성! +6점 획득")
+            active_jokers.remove("JOKER_EASY_HIGH_STREAK_2")
+            consecutive_high = 0
+    
+
+    # 6) JOKER_EASY_SUPER_STREAK => SUPER 2회 연속 => +15
+    if "JOKER_EASY_SUPER_STREAK_2" in active_jokers:
+        if consecutive_super >= 2:
+            total_score += 15
+            joker_sound.play()
+            print("[JOKER_EASY_SUPER_STREAK_2] SUPER 2연속 달성! +15점 획득")
+            active_jokers.remove("JOKER_EASY_SUPER_STREAK_2")
+            consecutive_super = 0
+
+
+    # ------------------------------------------------------------
+    # (C) sequence(순서) 관련 조커들
+    # ------------------------------------------------------------
+    # 1) "JOKER_LMHS_50": 직전 4바운스가 [LOW,MIDDLE,HIGH,SUPER]면 +50점
     if "JOKER_LMHS_50" in active_jokers:
         if len(bounce_sequence) >= 4:
             last4 = bounce_sequence[-4:]
@@ -1434,28 +1679,132 @@ def apply_jokers_on_bounce(bounce_type):
                 # 한 번만 발동할거라면 아래 코드 추가:
                 active_jokers.remove("JOKER_LMHS_50")
     
-    # 4) "JOKER_SUPER_3": SUPER를 3번 연속 시 +30점 (1회성)
-    if "JOKER_SUPER_3" in active_jokers:
+    # 2) JOKER_EASY_LOHI => LOW -> HIGH 순서로 연속 => +8
+    if "JOKER_EASY_LOHI" in active_jokers:
+        if len(bounce_sequence) >= 2:
+            last2 = bounce_sequence[-2:]
+            if last2 == ["LOW", "HIGH"]:
+                total_score += 8
+                joker_sound.play()
+                print("[JOKER_EASY_LOHI] LOW->HIGH 연속 달성! +8점 획득")
+                active_jokers.remove("JOKER_EASY_LOHI")
+    
+    # 3) JOKER_EASY_MIHISU => MIDDLE -> HIGH -> SUPER => +15
+    if "JOKER_EASY_MIHISU" in active_jokers:
         if len(bounce_sequence) >= 3:
-            # 마지막으로 조커가 발동된 위치를 추적하기 위한 변수 추가
-            if not hasattr(apply_jokers_on_bounce, "last_super3_index"):
-                apply_jokers_on_bounce.last_super3_index = -1
-            
-            # 마지막 발동 이후의 시퀀스만 검사
-            start_idx = apply_jokers_on_bounce.last_super3_index + 1
-            check_sequence = bounce_sequence[start_idx:]
-            
-            if len(check_sequence) >= 3:
-                last3 = check_sequence[-3:]
-                if last3 == ["SUPER", "SUPER", "SUPER"]:
-                    total_score += 30
-                    joker_sound.play() #조커 효과 발동 효과음
-                    print("[JOKER_SUPER_3] SUPER 3연속 달성! +30점 획득")
-                    # 마지막 발동 위치 업데이트
-                    apply_jokers_on_bounce.last_super3_index = len(bounce_sequence) - 1
-                    active_jokers.remove("JOKER_SUPER_3")  # 1회성이므로 제거
+            last3 = bounce_sequence[-3:]
+            if last3 == ["MIDDLE", "HIGH", "SUPER"]:
+                total_score += 15
+                joker_sound.play()
+                print("[JOKER_EASY_MIHISU] MID->HIGH->SUPER 연속 달성! +15점 획득")
+                active_jokers.remove("JOKER_EASY_MIHISU")
+    
+    # 4) JOKER_EASY_LMH_ANY => LOW, MIDDLE, HIGH를 최소 1회씩(순서 무관) => +12
+    #    간단히 count_low, count_mid, count_high >=1인지 체크
+    if "JOKER_EASY_LMH_ANY" in active_jokers:
+        if (count_low >= 1) and (count_mid >= 1) and (count_high >= 1):
+            total_score += 12
+            joker_sound.play()
+            print("[JOKER_EASY_LMH_ANY] LOW/MID/HIGH 각각 1회 이상 달성! +12점")
+            active_jokers.remove("JOKER_EASY_LMH_ANY")
+    
+    # 5) JOKER_EASY_VARIETY_4 => LOW, MIDDLE, HIGH, SUPER 각각 1회 이상 => +20
+    if "JOKER_EASY_VARIETY_4" in active_jokers:
+        if (count_low >= 1) and (count_mid >= 1) and (count_high >= 1) and (count_super >= 1):
+            total_score += 20
+            joker_sound.play()
+            print("[JOKER_EASY_VARIETY_4] 4개 유형 모두 1회 이상! +20점")
+            active_jokers.remove("JOKER_EASY_VARIETY_4")
 
 
+    # ------------------------------------------------------------
+    # (D) count(누적) 관련 조커들
+    # ------------------------------------------------------------
+
+    # 1) JOKER_EASY_ANY_10 => 아무 유형이든 10회 누적 => +10
+    if "JOKER_EASY_ANY_10" in active_jokers:
+        if count_any >= 10:
+            total_score += 10
+            joker_sound.play()
+            print("[JOKER_EASY_ANY_10] 아무 유형 10회 달성! +10점")
+            active_jokers.remove("JOKER_EASY_ANY_10")
+
+    # 2) JOKER_EASY_LOW_3 => LOW 3회 누적 => +4
+    if "JOKER_EASY_LOW_3" in active_jokers:
+        if count_low >= 3:
+            total_score += 4
+            joker_sound.play()
+            print("[JOKER_EASY_LOW_3] LOW 3회(누적) 달성! +4점")
+            active_jokers.remove("JOKER_EASY_LOW_3")
+
+    # 3) JOKER_EASY_LOW_5 => LOW 5회 누적 => +7
+    if "JOKER_EASY_LOW_5" in active_jokers:
+        if count_low >= 5:
+            total_score += 7
+            joker_sound.play()
+            print("[JOKER_EASY_LOW_5] LOW 5회(누적) 달성! +7점")
+            active_jokers.remove("JOKER_EASY_LOW_5")
+
+    # 4) JOKER_EASY_MID_3 => MIDDLE 3회 누적 => +5
+    if "JOKER_EASY_MID_3" in active_jokers:
+        if count_mid >= 3:
+            total_score += 5
+            joker_sound.play()
+            print("[JOKER_EASY_MID_3] MIDDLE 3회(누적) 달성! +5점")
+            active_jokers.remove("JOKER_EASY_MID_3")
+
+    # 5) JOKER_EASY_MID_5 => MIDDLE 5회 누적 => +8
+    if "JOKER_EASY_MID_5" in active_jokers:
+        if count_mid >= 5:
+            total_score += 8
+            joker_sound.play()
+            print("[JOKER_EASY_MID_5] MIDDLE 5회(누적) 달성! +8점")
+            active_jokers.remove("JOKER_EASY_MID_5")
+
+    # 6) JOKER_EASY_HIGH_2 => HIGH 2회 누적 => +5
+    if "JOKER_EASY_HIGH_2" in active_jokers:
+        if count_high >= 2:
+            total_score += 5
+            joker_sound.play()
+            print("[JOKER_EASY_HIGH_2] HIGH 2회(누적) 달성! +5점")
+            active_jokers.remove("JOKER_EASY_HIGH_2")
+
+    # 7) JOKER_EASY_HIGH_5 => HIGH 5회 누적 => +10
+    if "JOKER_EASY_HIGH_5" in active_jokers:
+        if count_high >= 5:
+            total_score += 10
+            joker_sound.play()
+            print("[JOKER_EASY_HIGH_5] HIGH 5회(누적) 달성! +10점")
+            active_jokers.remove("JOKER_EASY_HIGH_5")
+
+    # 8) JOKER_EASY_SUPER_1 => SUPER 1회 누적 => +5
+    if "JOKER_EASY_SUPER_1" in active_jokers:
+        if count_super >= 1:
+            total_score += 5
+            joker_sound.play()
+            print("[JOKER_EASY_SUPER_1] SUPER 1회 달성! +5점")
+            active_jokers.remove("JOKER_EASY_SUPER_1")
+
+    # 9) JOKER_EASY_SUPER_2 => SUPER 2회 누적 => +10
+    if "JOKER_EASY_SUPER_2" in active_jokers:
+        if count_super >= 2:
+            total_score += 10
+            joker_sound.play()
+            print("[JOKER_EASY_SUPER_2] SUPER 2회(누적) 달성! +10점")
+            active_jokers.remove("JOKER_EASY_SUPER_2")
+
+    # ------------------------------------------------------------
+    # (E) 기타 특수 조커
+    # ------------------------------------------------------------
+
+    # JOKER_EASY_NO_FAIL_10 => 한 번도 놓치지 않고 10회 연속 바운스 => +10
+    if "JOKER_EASY_NO_FAIL_10" in active_jokers:
+        if no_fail_streak >= 10:
+            total_score += 10
+            joker_sound.play()
+            print("[JOKER_EASY_NO_FAIL_10] 10연속 노미스 달성! +10점")
+            active_jokers.remove("JOKER_EASY_NO_FAIL_10")
+            # 달성 후 이 조커는 제거. no_fail_streak은 굳이 0으로 안 돌려도 됨(여러 번 발동할거면 로직 조절).
 
 def draw_single_player_mode(
     bounce_count,
@@ -1542,7 +1891,7 @@ def draw_single_player_mode(
                     cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
 
         # 첫 번째 박스(왼쪽)
-        (x1, y1, x2, y2) = (50, 200, 290, 300)
+        (x1, y1, x2, y2) = (50, 200, 240, 400)  
         cv2.rectangle(sp_img, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
         # chosen_jokers[0]의 title, desc 표시
@@ -1553,7 +1902,7 @@ def draw_single_player_mode(
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         # 두 번째 박스(오른쪽)
-        (x1b, y1b, x2b, y2b) = (350, 200, 590, 300)
+        (x1b, y1b, x2b, y2b) = (350, 200, 540, 400)
         cv2.rectangle(sp_img, (x1b, y1b), (x2b, y2b), (255, 255, 255), 2)
 
         joker1 = chosen_jokers[1]
@@ -1907,6 +2256,9 @@ while True:
             consecutiveUpCount = 0
             state = None
             current_state = "waiting"
+
+            if play_mode == "single":
+                no_fail_streak = 0  # 연속 실패 스택 초기화
             
             
 
@@ -1955,6 +2307,9 @@ while True:
             
             bounce_count = 0
             current_state = "waiting"
+
+            if play_mode == "single":
+                no_fail_streak = 0  # 연속 실패 스택 초기화
             
 
             # ★ 수정
@@ -2172,9 +2527,25 @@ while True:
         else:
             cv2.setWindowProperty("Bounce Count Window", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         is_fullscreen_bounce = not is_fullscreen_bounce
-
+    elif key in [ord('n'), ord('N')]:
+        if play_mode == "tournament":
+            # 1) PyQt 창 열어서 문자열 입력
+            name_string = pyqt_text_input_mode("8강 참가자 이름(띄어쓰기 구분)")
+            if name_string:
+                # 2) 입력된 문자열을 공백 기준으로 나누기
+                name_list = name_string.split()
+                if len(name_list) == 8:
+                    # 3) 8강 이름 리스트 갱신
+                    tournament_players_8 = name_list
+                    print("8강 이름 업데이트:", tournament_players_8)
+                else:
+                    print("8명 이름이 아닙니다. 다시 입력하세요.")
+            else:
+                print("입력이 취소되거나 빈 문자열.")
+        else:
+            print("토너먼트 모드에서만 이름을 입력할 수 있습니다.")
 # ----------------------------------------------------------------------------------------
 # 16) 종료 처리
 # ----------------------------------------------------------------------------------------
 cap.release()
-cv2.destroyAllWindows()
+cv2.destroyAllWindows()  
