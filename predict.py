@@ -1369,7 +1369,7 @@ bounce_time_diff = None
 
 # 토너먼트 모드 표시용 바운스 기록(=각 사람의 점수). 최대 14개면 8강+4강+2강 모두 가능.
 bounce_history = []
-tournament_players_8 = ["광운","성찬","명현","이차","법인장","이건희","애플","삼성"]
+tournament_players_8 = ['광운', '광조', '현조', '광조', '현조', '광운', '광조', '현조']
 #8강 토너먼트 리셋 버튼(오른쪽 상단) 좌표 저장
 # ----------------------------------------------------------------------------------------
 reset_button_rect_tournament = (0, 0, 0, 0)  # (x1, y1, x2, y2)를 저장할 전역 변수
@@ -2391,6 +2391,9 @@ while True:
                     # 3) 8강 이름 리스트 갱신
                     tournament_players_8 = name_list
                     print("8강 이름 업데이트:", tournament_players_8)
+
+                    tournament_img = draw_tournament_img_unified(bounce_history, width=640, height=480)
+                    combined_img[480:960, 640:1280] = tournament_img #8강 이름 업데이트하고 그려줌.
                 else:
                     print("8명 이름이 아닙니다. 다시 입력하세요.")
             else:
