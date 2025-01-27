@@ -71,6 +71,7 @@ def reset_all_states():
     global drag_rect_x, drag_rect_y, drag_rect_w, drag_rect_h
     global bounce_history
     global prev_bounce_count, prev_total_score
+    global score_color, bounce_type
 
     # 1) 바운스, 그래프 관련
     bounce_count = 0
@@ -106,6 +107,8 @@ def reset_all_states():
     bounce_sequence.clear()
     just_cleared_stage = False
     prev_total_score = -1
+    bounce_type = None
+    score_color = (255,255,255) #흰색
 
     # 6) 토너먼트 기록
     bounce_history.clear()
@@ -339,7 +342,7 @@ KOREAN_FONT_PATH = r"나눔손글씨_배은혜체.ttf"
 FONT_SIZE = 400
 
 digital_font = ImageFont.truetype(DIGITAL_NUMBER_FONT_PATH, FONT_SIZE)
-handwriting_font = ImageFont.truetype(HANDWRITING_FONT_PATH, 450)
+handwriting_font = ImageFont.truetype(HANDWRITING_FONT_PATH, 350)
 korean_font = ImageFont.truetype(KOREAN_FONT_PATH, 30)
 
 color_sequence = [
@@ -696,6 +699,55 @@ def render_text_with_ttf(
     img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
     return img_bgr
 
+def render_text_with_ttf_segments(
+    text_segments,
+    font,
+    bg_color=(0, 0, 0),
+    width=1920,
+    height=1080
+):
+    """
+    여러 텍스트 세그먼트를 다른 색상으로 렌더링하여 중앙에 배치하는 함수.
+
+    :param text_segments: 리스트 형태의 튜플 [(텍스트1, 색상1), (텍스트2, 색상2), ...]
+    :param font: PIL.ImageFont 객체
+    :param bg_color: 배경 색상 (기본값: 검정)
+    :param width: 이미지 너비 (기본값: 1920)
+    :param height: 이미지 높이 (기본값: 1080)
+    :return: OpenCV BGR 이미지 (numpy 배열)
+    """
+
+    # 배경 이미지 생성
+    img_pil = Image.new("RGB", (width, height), bg_color)
+    draw = ImageDraw.Draw(img_pil)
+
+    # 전체 텍스트 너비 계산
+    total_width = 0
+    max_height = 0
+    for text, color in text_segments:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        total_width += text_w
+        max_height = max(max_height, text_h)
+
+    # 텍스트 시작 위치 계산 (중앙 정렬)
+    current_x = (width - total_width) // 2 + 50
+    current_y = (height - max_height) // 2 - 40
+
+    # 각 세그먼트 렌더링
+    for text, color in text_segments:
+        draw.text((current_x, current_y), text, font=font, fill=color)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        current_x += text_w  # 다음 텍스트의 시작 위치 업데이트
+
+    # PIL 이미지를 OpenCV BGR 이미지로 변환
+    img_np = np.array(img_pil)
+    img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+    return img_bgr
+
+
 
 # ----------------------------------------------------------------------------------------
 # 11) y좌표 그래프 그리기 함수
@@ -749,16 +801,16 @@ def draw_y_graph(x_data, y_data, width=640, height=480, max_y=480, bounce_pts=No
         if btd is not None:
             if btd <= BOUNCE_THRESHOLDS["LOW"]:
                 label = "LOW"
-                color = (0, 0, 255)  # 빨간색
+                color = BOUNCE_TYPE_COLORS["LOW"] #회색
             elif btd < BOUNCE_THRESHOLDS["MIDDLE"]:
                 label = "MIDDLE"
-                color = (0, 255, 255)  # 노란색
+                color = BOUNCE_TYPE_COLORS["MIDDLE"] #주황색
             elif btd < BOUNCE_THRESHOLDS["HIGH"]:
                 label = "HIGH"
-                color = (0, 165, 255)  # 주황색
+                color = BOUNCE_TYPE_COLORS["HIGH"] #초록색
             else:
                 label = "SUPER"
-                color = (255, 0, 255)  # 보라색
+                color = BOUNCE_TYPE_COLORS["SUPER"] #보라색
             # 빨간 점 위로 텍스트 표시
             cv2.putText(
                 graph_img,
@@ -1406,6 +1458,14 @@ BOUNCE_TYPE_WEIGHTS = {
     "SUPER": 10
 }
 
+BOUNCE_TYPE_COLORS = {
+    "LOW": (200, 200, 200),  # 회색,
+    "MIDDLE": (255, 102, 0),  # 주황색,
+    "HIGH": (0, 255, 0),  # 초록색,
+    "SUPER": (255, 0, 255)  # 보라색
+}
+
+
 # -----------------------
 #전체 조커 후보 정의 (원하는 만큼)
 all_jokers = [
@@ -1485,6 +1545,7 @@ def handle_single_mode_stage():
     global just_cleared_stage
     global single_mode_state
     global total_score, bounce_sequence
+    global score_color
 
     if current_stage > len(stage_thresholds):
         return  # 이미 모든 스테이지 클리어
@@ -1501,6 +1562,7 @@ def handle_single_mode_stage():
         bounce_count = 0
         total_score = 0
         bounce_sequence = []
+        
 
         # 2) 다음 스테이지
         current_stage += 1
@@ -1923,14 +1985,36 @@ while True:
                                         else: #1,2,3,4,5,6,7,8,9..
                                             bounce_count_sound.play()
                                     elif play_mode == "single":
-                                        if total_score in hundred_unit_sounds: #100,200,300,400,500,600,700,800,900,1000
-                                            hundred_unit_sounds[total_score].play()
-                                        elif total_score % 100 == 0: #1100이후로 1200,1300,1400,1500...
-                                            score_sound.play()
-                                        elif total_score % 10 == 0: #10,20,30,40,50,60,70,80,90,100
-                                            collect_points_sound.play()
-                                        else: #1,2,3,4,5,6,7,8,9..
-                                            bounce_count_sound.play()
+                                        if prev_total_score is not None:
+                                            if 100 <= total_score <= 1000:
+                                                # 백의 자리 변화 감지
+                                                if (total_score // 100) != (prev_total_score // 100):
+                                                    hundred_unit_sounds[(total_score // 100) * 100].play()
+                                                # 십의 자리 변화 감지
+                                                elif ((total_score // 10) % 10) != ((prev_total_score // 10) % 10):
+                                                    collect_points_sound.play()
+                                                else:
+                                                    bounce_count_sound.play()
+                                            elif 10 <= total_score <= 99:
+                                                # 십의 자리 변화 감지
+                                                if (total_score // 10) != (prev_total_score // 10):
+                                                    collect_points_sound.play()
+                                                else:
+                                                    bounce_count_sound.play()
+                                            else:
+                                                # 일의 자리 변화 또는 단일 자리 숫자
+                                                bounce_count_sound.play()
+                                        else:
+                                            # 초기 점수일 때
+                                            if total_score in hundred_unit_sounds:
+                                                hundred_unit_sounds[total_score].play()
+                                            elif total_score % 10 == 0:
+                                                collect_points_sound.play()
+                                            else:
+                                                bounce_count_sound.play()
+
+
+
 
                                 
 
@@ -1985,16 +2069,16 @@ while True:
                 # 바운스 간격에 따른 레이블 결정
                 if bounce_time_diff <= BOUNCE_THRESHOLDS["LOW"]:
                     label = "LOW"
-                    color = (0, 0, 255)  # 빨간색
+                    color = BOUNCE_TYPE_COLORS["LOW"]
                 elif bounce_time_diff < BOUNCE_THRESHOLDS["MIDDLE"]:
                     label = "MIDDLE"
-                    color = (0, 255, 255)  # 노란색
+                    color = BOUNCE_TYPE_COLORS["MIDDLE"]
                 elif bounce_time_diff < BOUNCE_THRESHOLDS["HIGH"]:
                     label = "HIGH"
-                    color = (0, 165, 255)  # 주황색
+                    color = BOUNCE_TYPE_COLORS["HIGH"]
                 else:
                     label = "SUPER"
-                    color = (255, 0, 255)  # 보라색
+                    color = BOUNCE_TYPE_COLORS["SUPER"]
 
 
                     
@@ -2121,10 +2205,7 @@ while True:
                 # 실제 실패(중도 탈락)인 경우만 stage=1로 돌아감
                 if play_mode == 'single':
                     # 스테이지 실패 => 다시 1단계로
-                    current_stage = 1
-                    bounce_sequence = []
-                    total_score = 0 
-                    active_jokers.clear()  # 게임 오버시 조커 목록도 비움!
+                    reset_all_states() #초기화
                 print("No bounce => waiting + alert_sound!")
                 
 
@@ -2173,10 +2254,7 @@ while True:
                 # 실제 실패(중도 탈락)인 경우만 stage=1로 돌아감
                 if play_mode == 'single':
                     # 스테이지 실패 => 다시 1단계로
-                    current_stage = 1
-                    bounce_sequence = []
-                    total_score = 0 
-                    active_jokers.clear()  # 게임 오버시 조커 목록도 비움!
+                    reset_all_states() #초기화
                 print("No bounce => waiting + alert_sound!")
 
 
@@ -2324,18 +2402,48 @@ while True:
         else:
             target = 99999  # 혹은 다른 값
         # total_score 값이 **바뀌었을 때만** bounce_img를 새로 만든다
+        
+
         if prev_total_score != total_score:
-            display_value = f"{total_score}/{target}"
-            # 예시: 흰 글자, 검정 배경
-            bounce_img = render_text_with_ttf(
-                text=display_value,
+
+            if 'bounce_type' not in locals(): #현재 bounce_type이 존재하지 않을때
+                score_color = (255, 255, 255)  # 흰색 (기본)
+            else:
+                if bounce_type == "LOW":
+                    # score_color = (200, 200, 200)  # 회색
+                    score_color = BOUNCE_TYPE_COLORS["LOW"]
+                elif bounce_type == "MIDDLE":
+                    # score_color = (255, 102, 0)  # 주황색
+                    score_color = BOUNCE_TYPE_COLORS["MIDDLE"]
+                elif bounce_type == "HIGH":
+                    # score_color = (255, 255, 0)  # 노란색
+                    score_color = BOUNCE_TYPE_COLORS["HIGH"]
+                elif bounce_type == "SUPER":
+                    # score_color = (255, 0, 255)  # 보라색
+                    score_color = BOUNCE_TYPE_COLORS["SUPER"]
+                else:
+                    score_color = (255,255,255) #흰색
+
+
+
+            # display_value = f"{total_score}/{target}"
+
+            # 텍스트 세그먼트 정의: [(텍스트, 색상), ...]
+            display_segments = [
+                (str(total_score), score_color),
+                (f"/{target}", (255, 255, 255))  # 흰색
+            ]
+
+            # 새로운 함수로 bounce_img 생성
+            bounce_img = render_text_with_ttf_segments(
+                text_segments=display_segments,
                 font=handwriting_font,
-                text_color=(255, 255, 255),
-                bg_color=(0, 0, 255),  # 기본 파랑
+                bg_color=(0, 0, 255),  # 기본 파랑 배경
                 width=1920,
                 height=1080
             )
             prev_total_score = total_score
+
     elif play_mode == "tournament":
         # 기존 로직 (싱글 모드가 아닐 때)
         if bounce_count != prev_bounce_count:
