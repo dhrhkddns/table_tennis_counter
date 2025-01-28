@@ -72,6 +72,8 @@ def reset_all_states():
     global bounce_history
     global prev_bounce_count, prev_total_score
     global score_color, bounce_type
+    global BOUNCE_TYPE_WEIGHTS
+
 
     # 1) 바운스, 그래프 관련
     bounce_count = 0
@@ -109,6 +111,12 @@ def reset_all_states():
     prev_total_score = -1
     bounce_type = None
     score_color = (255,255,255) #흰색
+    BOUNCE_TYPE_WEIGHTS = {
+        "LOW": 1,
+        "MIDDLE": 1,
+        "HIGH": 5,
+        "SUPER": 10
+    }
 
     # 6) 토너먼트 기록
     bounce_history.clear()
@@ -737,7 +745,7 @@ def render_text_with_ttf_segments(
 
     # 각 세그먼트 렌더링
     for text, color in text_segments:
-        draw.text((current_x, current_y), text, font=font, fill=color)
+        draw.text((current_x, current_y), text, font=font, fill=(color[2], color[1], color[0])) #FILL할때 PIL이미지는 RGB기준이여서 배열 변경!
         bbox = draw.textbbox((0, 0), text, font=font)
         text_w = bbox[2] - bbox[0]
         current_x += text_w  # 다음 텍스트의 시작 위치 업데이트
@@ -1442,7 +1450,7 @@ fps = 0.0
 # ----------------------------------------------------------------------------------------
 # 바운스 기준값을 위한 전역 구성
 # ----------------------------------------------------------------------------------------
-play_mode = "single"  # 싱글 모드 플래그
+play_mode = "tournament"  # 토너먼트 모드시작 플래그
 BOUNCE_THRESHOLDS = {
     "LOW": 0.33,
     "MIDDLE": 0.58,
@@ -1458,9 +1466,10 @@ BOUNCE_TYPE_WEIGHTS = {
     "SUPER": 10
 }
 
+#BGR기준
 BOUNCE_TYPE_COLORS = {
     "LOW": (200, 200, 200),  # 회색,
-    "MIDDLE": (255, 102, 0),  # 주황색,
+    "MIDDLE": (0, 102, 255),  # 주황색,
     "HIGH": (0, 255, 0),  # 초록색,
     "SUPER": (255, 0, 255)  # 보라색
 }
@@ -1481,11 +1490,11 @@ all_jokers = [
     }, {
         "id": "JOKER_HIGH_1",
         "title": "JOKER_HIGH_1", 
-        "desc": "SUPER 1x => +4"
+        "desc": "HIGH 1x => +3"
     }, {
         "id": "JOKER_SUPER_1",
         "title": "JOKER_SUPER_1",
-        "desc": "HIGH 1x => +7"
+        "desc": "SUPER 1x => +5"
     }
     # Already used 3 examples
     # {
@@ -1518,7 +1527,7 @@ active_jokers = []         # 현재 내가 가진 활성화된 조커들 (예: [
 
 bounce_sequence = []  # 바운스 타입("LOW"/"MIDDLE"/"HIGH"/"SUPER")을 순서대로 기록
 current_stage = 1
-stage_thresholds = [100, 300, 500, 1000, 2000, 3000, 5000, 7000, 10000, 15000]
+stage_thresholds = [5, 10, 30, 50, 100, 300, 500, 1000, 2000, 3000] #스테이지 클리어 조건 
 single_mode_state = "playing"   # 또는 "choosing_joker"
 just_cleared_stage = False  # ★ 추가: 스테이지 클리어 직후 alert_sound를 막기 위한 플래그
 total_score = 0    # 조커 효과로 얻는 추가 점수만 누적
@@ -1546,6 +1555,7 @@ def handle_single_mode_stage():
     global single_mode_state
     global total_score, bounce_sequence
     global score_color
+    global enlarged_view
 
     if current_stage > len(stage_thresholds):
         return  # 이미 모든 스테이지 클리어
@@ -1557,6 +1567,10 @@ def handle_single_mode_stage():
         print(f"[싱글모드] Stage {current_stage} Clear! (목표={target}, 점수={total_score})")
 
         stage_clear_sound.play()
+
+        enlarged_view = 'br' #클리어하고 나서 진행상황보도록.
+
+
 
         # 1) 바운스 카운트, 조커 점수, 바운스 시퀀스 초기화
         bounce_count = 0
@@ -1571,15 +1585,19 @@ def handle_single_mode_stage():
         just_cleared_stage = True
         current_state = "waiting"
 
-        # 조커 선택 모드로 전환
-        single_mode_state = "choosing_joker"
+
+        ##############################
+        #조커 선택창 활성화 시킬거면 이 주석 푸세요!!!!!!
+        ##############################
+        # # 조커 선택 모드로 전환
+        # single_mode_state = "choosing_joker"
 
 
-        # #끝났으니 원상복구
-        drag_rect_x = 0
-        drag_rect_y = 0
-        drag_rect_w = 1
-        drag_rect_h = 1
+        # # #끝났으니 원상복구
+        # drag_rect_x = 0
+        # drag_rect_y = 0
+        # drag_rect_w = 1
+        # drag_rect_h = 1
 
 
 def apply_jokers_on_bounce(bounce_type):
@@ -1655,12 +1673,34 @@ def apply_jokers_on_bounce(bounce_type):
 
 
 
-    #결론: 조커를 통해 가장 따끈따끈한 가중치를 업데이트하고 그걸 포함한 totla_score를 최종으로 업데이트해서 global을 통해 함수에서 전역변수로 이동
+
+    if "JOKER_LOW_1" in active_jokers:
+        if bounce_type == "LOW":
+            BOUNCE_TYPE_WEIGHTS["LOW"] += 1 #이 조커는 한번쓰면 영구적으로 WEIGHT계속 적용 고로 REMOVE해야함.
+            active_jokers.remove("JOKER_LOW_1")
+    if "JOKER_MIDDLE_1" in active_jokers:
+        if bounce_type == "MIDDLE":
+            BOUNCE_TYPE_WEIGHTS["MIDDLE"] += 2
+            active_jokers.remove("JOKER_MIDDLE_1")  #이 조커는 한번쓰면 영구적으로 WEIGHT계속 적용 고로 REMOVE해야함.
+    if "JOKER_HIGH_1" in active_jokers:
+        if bounce_type == "HIGH":
+            BOUNCE_TYPE_WEIGHTS["HIGH"] += 3 #이 조커는 한번쓰면 영구적으로 WEIGHT계속 적용 고로 REMOVE해야함.
+            active_jokers.remove("JOKER_HIGH_1")
+    if "JOKER_SUPER_1" in active_jokers:
+        if bounce_type == "MIDDLE":
+            BOUNCE_TYPE_WEIGHTS["SUPER"] += 5
+            active_jokers.remove("JOKER_SUPER_1")  #이 조커는 한번쓰면 영구적으로 WEIGHT계속 적용 고로 REMOVE해야함.
+
+
+
+    #결론: 조커 사용 했을때의 가중치를 업데이트하고 그걸 포함한 total_score를 최종으로 업데이트해서 global을 통해 함수에서 전역변수로 이동
     weight = BOUNCE_TYPE_WEIGHTS.get(bounce_type, 0)  # 유형이 없을 경우 기본값 0
+
+    #가중치 업데이트 한걸로 조커 적용후 최종적으로 total_score 업데이트
     total_score += weight
     print(f"바운스 유형: {bounce_type}, 추가된 가중치: {weight}, 총 점수: {total_score}")
 
-    
+
     # if "JOKER_SUPER_3" in active_jokers:
     #     if consecutive_super >= 3:
     #         total_score += 30
@@ -1785,14 +1825,14 @@ def draw_single_player_mode(
         
         # 전체 반투명 배경
         cv2.rectangle(overlay, (0, 0), (width, height), (50, 50, 50), -1)
-        alpha = 0.6
+        alpha = 1.0
         sp_img = cv2.addWeighted(overlay, alpha, sp_img, 1 - alpha, 0)
 
         cv2.putText(sp_img, "Choose a Joker!", (150, 80),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
 
         # 첫 번째 박스(왼쪽)
-        (x1, y1, x2, y2) = (50, 200, 240, 400)  
+        (x1, y1, x2, y2) = (50, 200, 270, 300)  
         cv2.rectangle(sp_img, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
         # chosen_jokers[0]의 title, desc 표시
@@ -1803,7 +1843,7 @@ def draw_single_player_mode(
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         # 두 번째 박스(오른쪽)
-        (x1b, y1b, x2b, y2b) = (350, 200, 540, 400)
+        (x1b, y1b, x2b, y2b) = (350, 200, 570, 300)
         cv2.rectangle(sp_img, (x1b, y1b), (x2b, y2b), (255, 255, 255), 2)
 
         joker1 = chosen_jokers[1]
@@ -1907,8 +1947,10 @@ while True:
                 elif (time.time() - stationary_start_time) >= stationary_threshold:
                     if in_rect_time >= stationary_threshold and current_state != "ready":
                         current_state = "ready"
-                        ready_sound.play()
-                        # enlarged_view = 'tl' #트래킹 상태일때는 확대된 내 모습을 보기위해 범위파악을 위해서 자동 확대
+                        ready_sound.play() #준비 상황
+                        
+                        enlarged_view = 'tl' #트래킹 상태일때는 확대된 내 모습을 보기위해 범위파악을 위해서 자동 확대
+                        
                         state_change_time = time.time()
                         print("State changed to READY")
 
@@ -2162,7 +2204,7 @@ while True:
             drag_rect_h = 200
             print("State changed to WAITING (no detection for 1s in READY)")
 
-    # tracking 중에 공 안 보이면 -> waiting
+    # tracking 중에 공 '안 보이면' -> waiting
     if current_state == "tracking":
         if last_detection_time is not None and (time.time() - last_detection_time) >= 1.5: #1.5초 이상 공이 안보일때
             
@@ -2178,16 +2220,19 @@ while True:
             drag_rect_w = 640
             drag_rect_h = 200
 
-                # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
-                # enlarged_view = 'br'
-
-
-            
             bounce_count = 0
             consecutiveDownCount = 0
             consecutiveUpCount = 0
             state = None
             current_state = "waiting"
+
+            # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
+            if play_mode == "tournament":
+                enlarged_view = 'br'
+
+
+            
+
 
             if play_mode == "single":
                 no_fail_streak = 0  # 연속 실패 스택 초기화
@@ -2217,7 +2262,7 @@ while True:
         y_values.pop(0)
         orange_pixel_values.pop(0)
 
-    # 바운스 간 일정 시간 지나면 초기화 (옵션)
+    # 공이 화면 보이지만 바운스를 일정시간 감지 못하면 아웃
     if current_bounce_time is not None:
         if time.time() - current_bounce_time > CONTINUOUS_TIMEOUT: #가장 최근 바운스 이후로 1.5초 이상 지났을때
             
@@ -2233,7 +2278,8 @@ while True:
             drag_rect_h = 200
 
                 # # 토너먼트 결과가 업데이트되었으므로, Combined 창의 토너먼트 영역(enlarged_view)을 'br'(오른쪽 하단)로 설정
-                # enlarged_view = 'br'
+            if play_mode == "tournament":
+                enlarged_view = 'br'
 
             
             bounce_count = 0
