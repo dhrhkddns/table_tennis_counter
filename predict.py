@@ -298,14 +298,22 @@ cv2.setMouseCallback("Volume Control", mouse_callback_volume)
 
 # 2) YOLO 모델 로드
 # ----------------------------------------------------------------------------------------
-model = YOLO(r"C:\Users\omyra\Desktop\coding\ping_pong\Ping-Pong-Detection-3\Results\weights\best.pt")
-model.to("cuda")
+model = YOLO(r"Ping-Pong-Detection-3-best.pt")
+
 
 # ----------------------------------------------------------------------------------------
 # 3) 카메라 디바이스 연결
 # ----------------------------------------------------------------------------------------
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+cap = cv2.VideoCapture(3, cv2.CAP_MSMF) #p눌러서 변경 가능 #FHD60F는 CAP_DSHOW, logitech은 CAP_MSMF와 호환 최상위
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+# 예: 코드 상단(전역)에 다음 딕셔너리 정의
+api_pref_map = {
+    "MSMF": cv2.CAP_MSMF,
+    "DSHOW": cv2.CAP_DSHOW,
+    "V4L2": cv2.CAP_V4L2,
+    "ANY": cv2.CAP_ANY,  # 필요한 항목 추가
+}
+
 
 
 # ----------------------------------------------------------------------------------------
@@ -1443,6 +1451,10 @@ draw_tournament_img_unified.previous_bounce_history_len = len(bounce_history)
 # ----------------------------------------------------------------------------------------
 prev_time = time.time()
 fps = 0.0
+###########################3
+fps_counter = 0
+fps_start_time = time.time()
+fps_display = 0.0
 
 #############################
 #싱글 플레이어 모드용 전역 변수
@@ -1875,11 +1887,19 @@ while True:
         fps = 1.0 / time_diff
     prev_time = current_time
 
+    #FPS 1초마다 표시하기 위한 로직직
+    elapsed = current_time - fps_start_time
+    if elapsed >= 1.0:  # 1초 지났으면
+        fps_display = fps_counter / elapsed  # '해당 1초 간' 평균 FPS
+        fps_counter = 0
+        fps_start_time = current_time
+
     results = model.predict(frame, imgsz=640, conf=0.3, max_det=1, show=False, device=0,verbose=False)
     boxes = results[0].boxes
 
     x_values.append(frame_count)
     frame_count += 1
+    fps_counter += 1 #FPS 1초마다 평균 구하기위한 거. 1초마다 다시 0으로로
 
     detected = False
     orange_pixels = 0
@@ -1905,7 +1925,7 @@ while True:
         orange_pixels = cv2.countNonZero(mask_orange)
 
         if ignore_zero_orange:
-            if orange_pixels >= 5:
+            if orange_pixels >= 3:
                 detected = True
         else:
             detected = True
@@ -2332,7 +2352,7 @@ while True:
     )
     cv2.putText(
         frame_resized,
-        f"FPS: {fps:.2f}",
+        f"FPS: {fps_display:.2f}", #1초마다 할거면 fps_disply, 프레임마다할거면 fps
         (10, 60),
         cv2.FONT_HERSHEY_SIMPLEX,
         1.0,
@@ -2554,6 +2574,46 @@ while True:
                 print("입력이 취소되거나 빈 문자열.")
         else:
             print("토너먼트 모드에서만 이름을 입력할 수 있습니다.")
+    elif key in [ord('p'), ord('P')]:
+        # 1) PyQt 이용해서 '카메라 인덱스 API' 문자열 입력
+        info_string = pyqt_text_input_mode("카메라 인덱스와 apiPreference를 띄어쓰기로 입력하세요.\n예시: '0 CAP_DSHOW'")
+
+        if info_string:
+            # 2) 입력 문자열을 공백으로 나눔
+            parts = info_string.split()
+            if len(parts) == 2:
+                # 예: "0 CAP_MSMF" → parts[0] = "0", parts[1] = "CAP_MSMF"
+                try:
+                    new_cam_index = int(parts[0])   # 카메라 인덱스 정수 변환
+                except ValueError:
+                    print("오류: 카메라 인덱스는 정수로 입력해야 합니다.")
+                    continue
+                
+                api_str = parts[1]
+                # 3) 딕셔너리에서 API Preference 상수 찾기 DSHOW, MSMF등...
+                if api_str in api_pref_map:
+                    new_api_pref = api_pref_map[api_str]
+                else:
+                    print(f"오류: '{api_str}'은(는) 인식할 수 없는 API 명칭입니다.")
+                    print(f"사용 가능한 API 목록: {list(api_pref_map.keys())}")
+                    continue
+
+                # 4) 기존 cap 해제 후, 새로운 cap으로 연결
+                cap.release()
+                cap = cv2.VideoCapture(new_cam_index, new_api_pref)
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+
+                # 5) 성공 여부 체크
+                if cap.isOpened():
+                    print(f"[성공] 카메라 인덱스={new_cam_index}, API={api_str} 로 열었습니다.")
+                else:
+                    print(f"[실패] 카메라 인덱스={new_cam_index} 로는 열 수 없습니다.")
+            
+            else:
+                print("입력 형식이 잘못되었습니다. 예) 0 DSHOW")
+        else:
+            print("입력이 취소되었거나 빈 문자열입니다.")
+
 # ----------------------------------------------------------------------------------------
 # 16) 종료 처리
 # ----------------------------------------------------------------------------------------
