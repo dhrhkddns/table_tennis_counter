@@ -1,4 +1,5 @@
-
+-FHD60F 웹캠은 직접 USB 단자 연결시 60FPS, 그러나 USB 허브를 이용해서 간접적 연결을 할시 50FPS 나오는 현상이 있다. (단순파일, 복잡 게임파일 동일)
+![KakaoTalk_20250202_005853950_01](https://github.com/user-attachments/assets/fd4ee805-fabe-4fe7-8ad9-914282cad236)
 
 -스피커 싱크가 어떤거는 살짝 안맞기도 함.
 
