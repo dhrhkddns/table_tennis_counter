@@ -304,7 +304,7 @@ model = YOLO(r"Ping-Pong-Detection-3-best.pt")
 # ----------------------------------------------------------------------------------------
 # 3) 카메라 디바이스 연결
 # ----------------------------------------------------------------------------------------
-cap = cv2.VideoCapture(3, cv2.CAP_MSMF) #p눌러서 변경 가능 #FHD60F는 CAP_DSHOW, logitech은 CAP_MSMF와 호환 최상위
+cap = cv2.VideoCapture(3, cv2.CAP_DSHOW) #p눌러서 변경 가능 #FHD60F는 CAP_DSHOW, logitech은 CAP_MSMF와 호환 최상위
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 # 예: 코드 상단(전역)에 다음 딕셔너리 정의
 api_pref_map = {
@@ -350,6 +350,8 @@ button_rect_ignore = [500, 70, 120, 40]
 # 웹캠 선택을 위한 전역 변수
 current_camera_index = 0
 webcam_button_rects = []
+# [추가] 밝기 조절을 위한 전역 변수 (기본: 1.0 → 원본 밝기)
+brightness_alpha = 1.0  # 1.0이면 원본, 0.5면 어둡게, 1.5면 밝게
 
 #점수 표시
 DIGITAL_NUMBER_FONT_PATH = r"C:\Users\omyra\Desktop\coding\ping_pong\Digital Display.ttf"
@@ -717,51 +719,110 @@ def render_text_with_ttf(
 
 def render_text_with_ttf_segments(
     text_segments,
-    font,
+    base_font_path,
     bg_color=(0, 0, 0),
     width=1920,
-    height=1080
+    height=1080,
+    default_size=40
 ):
     """
-    여러 텍스트 세그먼트를 다른 색상으로 렌더링하여 중앙에 배치하는 함수.
+    여러 텍스트 세그먼트를 렌더링하되,
+    1) 첫 번째 텍스트는 화면 '상단 중앙'에 배치
+    2) 나머지 텍스트들은 기존 코드처럼 화면 '정중앙'에 이어서 배치
+    3) 각 텍스트마다 (텍스트, 색상, 폰트크기)로 크기를 다르게 적용 가능
 
-    :param text_segments: 리스트 형태의 튜플 [(텍스트1, 색상1), (텍스트2, 색상2), ...]
-    :param font: PIL.ImageFont 객체
-    :param bg_color: 배경 색상 (기본값: 검정)
-    :param width: 이미지 너비 (기본값: 1920)
-    :param height: 이미지 높이 (기본값: 1080)
+    :param text_segments: 
+        예) [
+          ("Stage1", (255,255,255), 60),
+          ("100", (0,255,0), 120),
+          ("/300", (255,0,0), 80),
+        ]
+    :param base_font_path: 사용할 폰트 경로 (예: "SpoqaHanSansNeo-Medium.ttf")
+    :param bg_color: 배경색 (기본값: 검정)
+    :param width, height: 출력 이미지 크기
+    :param default_size: size가 주어지지 않았을 때 사용할 폰트 크기 (기본 40)
     :return: OpenCV BGR 이미지 (numpy 배열)
     """
 
-    # 배경 이미지 생성
+    # 1) 배경 이미지 & Draw 객체
     img_pil = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(img_pil)
 
-    # 전체 텍스트 너비 계산
-    total_width = 0
-    max_height = 0
-    for text, color in text_segments:
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-        total_width += text_w
-        max_height = max(max_height, text_h)
+    # 2) 세그먼트가 비어 있으면 그대로 반환
+    if not text_segments:
+        return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
-    # 텍스트 시작 위치 계산 (중앙 정렬)
-    current_x = (width - total_width) // 2 + 50
-    current_y = (height - max_height) // 2 - 40
+    # 3) 첫 번째 텍스트/색상/크기 + 나머지 분리
+    first_text, first_color, *maybe_size = text_segments[0]
+    first_size = maybe_size[0] if maybe_size else default_size
+    rest_segments = text_segments[1:]  # 두 번째 이후 텍스트들
 
-    # 각 세그먼트 렌더링
-    for text, color in text_segments:
-        draw.text((current_x, current_y), text, font=font, fill=(color[2], color[1], color[0])) #FILL할때 PIL이미지는 RGB기준이여서 배열 변경!
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_w = bbox[2] - bbox[0]
-        current_x += text_w  # 다음 텍스트의 시작 위치 업데이트
+    # ----------------------------------------------------------------------------
+    # A. 첫 번째 텍스트 (상단 중앙 배치)
+    # ----------------------------------------------------------------------------
+    font_first = ImageFont.truetype(base_font_path, size=first_size)
+    bbox_first = draw.textbbox((0, 0), first_text, font=font_first)
+    text_w_first = bbox_first[2] - bbox_first[0]
+    text_h_first = bbox_first[3] - bbox_first[1]
 
-    # PIL 이미지를 OpenCV BGR 이미지로 변환
+    offset_top = 10  # 상단에서부터 얼마나 떨어뜨릴지
+    first_x = 20
+    first_y = offset_top
+
+    # PIL이 RGB 순서이므로, fill=(R, G, B) 형태로 전달
+    draw.text(
+        (first_x, first_y),
+        first_text,
+        font=font_first,
+        fill=(first_color[2], first_color[1], first_color[0])
+    )
+
+    # ----------------------------------------------------------------------------
+    # B. 나머지 텍스트 (가운데 정렬로 이어붙이기)
+    # ----------------------------------------------------------------------------
+    if rest_segments:
+        # (B1) 전체 너비 및 최대 높이 계산
+        total_width = 0
+        max_height = 0
+        # 각 세그먼트별로 폰트를 그때그때 생성하여 측정
+        segment_sizes = []
+        for (text, color, *maybe_sz) in rest_segments:
+            sz = maybe_sz[0] if maybe_sz else default_size
+            fnt = ImageFont.truetype(base_font_path, size=sz)
+
+            bbox = draw.textbbox((0, 0), text, font=fnt)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+
+            total_width += text_w
+            max_height = max(max_height, text_h)
+            segment_sizes.append((fnt, text_w, text_h))
+
+        # (B2) 중앙 정렬 시작 위치 (현재는 x축: 중앙-50 정도에서 시작)
+        current_x = (width - total_width) // 2 + 10
+        current_y = (height - max_height) // 2 - 40
+
+        # (B3) 각 텍스트 렌더링
+        for i, (seg) in enumerate(rest_segments):
+            text, color, *maybe_sz = seg
+            sz = maybe_sz[0] if maybe_sz else default_size
+            font_this_seg, text_w, text_h = segment_sizes[i]
+
+            # 실제 그리기
+            draw.text(
+                (current_x, current_y),
+                text,
+                font=font_this_seg,
+                fill=(color[2], color[1], color[0])
+            )
+            current_x += text_w
+
+    # 최종 PIL → NumPy → BGR 변환 후 반환
     img_np = np.array(img_pil)
     img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
     return img_bgr
+
+
 
 
 
@@ -1877,6 +1938,10 @@ while True:
 
     ret, frame = cap.read()
     frame = cv2.flip(frame, 1) #좌우 반전으로 헷갈리지 않게 하기
+
+    # [추가] 밝기 조절 적용: 전역 변수 brightness_alpha에 따라 밝기 조절
+    # cv2.convertScaleAbs는 각 픽셀에 alpha * pixel + beta (여기서는 beta=0)를 적용합니다.
+    frame = cv2.convertScaleAbs(frame, alpha=brightness_alpha, beta=0)
     if not ret:
         print("No more frames or camera error.")
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -2496,14 +2561,15 @@ while True:
 
             # 텍스트 세그먼트 정의: [(텍스트, 색상), ...]
             display_segments = [
-                (str(total_score), score_color),
-                (f"/{target}", (255, 255, 255))  # 흰색
+                (f"{current_stage}세트",(255, 255, 255),130),
+                (str(total_score), score_color, 400),
+                (f"/{target}", (255, 255, 255),400)  # 흰색
             ]
 
             # 새로운 함수로 bounce_img 생성
             bounce_img = render_text_with_ttf_segments(
                 text_segments=display_segments,
-                font=handwriting_font,
+                base_font_path= HANDWRITING_FONT_PATH,
                 bg_color=(0, 0, 255),  # 기본 파랑 배경
                 width=1920,
                 height=1080
@@ -2576,7 +2642,7 @@ while True:
             print("토너먼트 모드에서만 이름을 입력할 수 있습니다.")
     elif key in [ord('p'), ord('P')]:
         # 1) PyQt 이용해서 '카메라 인덱스 API' 문자열 입력
-        info_string = pyqt_text_input_mode("카메라 인덱스와 apiPreference를 띄어쓰기로 입력하세요.\n예시: '0 CAP_DSHOW'")
+        info_string = pyqt_text_input_mode("카메라 인덱스와 apiPreference를 띄어쓰기로 입력하세요.\n예시: '0 DSHOW'")
 
         if info_string:
             # 2) 입력 문자열을 공백으로 나눔
@@ -2613,6 +2679,17 @@ while True:
                 print("입력 형식이 잘못되었습니다. 예) 0 DSHOW")
         else:
             print("입력이 취소되었거나 빈 문자열입니다.")
+    # [추가] '-'와 '=' 키를 이용한 밝기 조절
+    elif key == ord('-'):
+        # 밝기를 낮추기 (최소 0.1까지)
+        brightness_alpha = max(0.1, brightness_alpha - 0.1)
+        print(f"Brightness decreased to {brightness_alpha:.1f}")
+    elif key == ord('='):
+        # 밝기를 높이기 (최대 3.0까지)
+        brightness_alpha = min(3.0, brightness_alpha + 0.1)
+        print(f"Brightness increased to {brightness_alpha:.1f}")
+
+
 
 # ----------------------------------------------------------------------------------------
 # 16) 종료 처리
