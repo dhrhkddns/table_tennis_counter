@@ -1,3 +1,14 @@
+-pc방이나 다른 컴퓨터에서 conda gpu로 테스트 할때 콘다 gpu환경이 설치가 안되는 오류가 나올때가 있다. (똑같이 내 노트북에서는 됨에도 불구하고)
+그럴때는 버전을 바꿔서 설치해보는 걸 추천한다.
+
+conda install -c pytorch -c nvidia -c conda-forge pytorch torchvision pytorch-cuda=12.4 ultralytics
+
+![conda_gpu_설치세팅](https://github.com/user-attachments/assets/2184e887-56a9-4c23-808b-cd1eda280c46)
+
+(ultralytics 홈페이지에서는 pytorch-cuda 패키지가 11.8로 있는데, 이 줄을 그대로 복사해서 실행하면 설치 오류가 나는 경우가 있는데 12.4로 변경하면 잘되는 경우가 있다.)
+
+
+
 -FHD60F 웹캠은 직접 USB 단자 연결시 60FPS, 그러나 USB 허브를 이용해서 간접적 연결을 할시 50FPS 나오는 현상이 있다. (단순파일, 복잡 게임파일 동일)
 ![KakaoTalk_20250202_005853950_01](https://github.com/user-attachments/assets/fd4ee805-fabe-4fe7-8ad9-914282cad236)
 
