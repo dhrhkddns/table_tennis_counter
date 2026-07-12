@@ -1,12 +1,6 @@
-# AI-generated ping-pong paddles (Cursor image model)
+# Pixel ping-pong paddles (Cursor image model)
 
-Cursor 이미지 생성 모델로 만든 탁구채 에셋입니다. (Python 스크립트 생성 아님)
+Cursor 이미지 생성 모델로 만든 **픽셀 아트 탁구채**만 포함합니다.
 
-## 제한
-- 이미지 모델은 **호출당 1장** 생성입니다.
-- 한 세션에서 1000장을 한 번에 뽑는 것은 비현실적이라, 스타일이 다른 샘플 배치로 추가합니다.
-
-## 현재 파일
-`paddle_001_*.png` ~ 다양 스타일 (픽셀, 네온, 실사, 카와이, 판타지 등)
-
-추가 배치가 필요하면 같은 폴더에 이어서 생성하면 됩니다.
+- 스타일: 8-bit / hard pixel only
+- 파일: `paddle_001_pixel.png` …
