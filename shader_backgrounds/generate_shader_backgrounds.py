@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate seamless gray-tone shader background GIF loops (1920x1080).
+"""Generate seamless near-black shader background GIF loops (1920x1080).
 
 All motion is phase-locked to a full 2π cycle with *integer* harmonics so
 frame 0 and frame N meet without a visual jump.
@@ -19,7 +19,7 @@ W, H = 1920, 1080
 LW, LH = 192, 108  # compact render → upscale (keeps GIF size sane)
 FRAMES = 20
 DURATION_MS = 80  # 20 * 80ms = 1.6s loop
-PALETTE = 24
+PALETTE = 20
 
 
 def phase(frame: int) -> float:
@@ -27,16 +27,18 @@ def phase(frame: int) -> float:
     return (2.0 * math.pi * frame) / FRAMES
 
 
-def lerp(a: float, b: float, t: float) -> float:
-    return a + (b - a) * t
+def black_rgb(v: np.ndarray, tint: float = 0.0) -> np.ndarray:
+    """Map luminance [0,1] → near-black RGB (keep highlights dark).
 
-
-def gray_rgb(v: np.ndarray, cool: float = 0.0) -> np.ndarray:
-    """Map luminance [0,1] → soft gray RGB with optional cool bias."""
+    tint > 0 = slight cool bias, tint < 0 = slight warm bias.
+    Output stays in a black / charcoal family.
+    """
+    # Crush into a dark range: mostly 0–0.40 luminance (black / charcoal)
     v = np.clip(v, 0.0, 1.0)
-    r = v * (1.0 - 0.02 * cool)
-    g = v * (1.0 - 0.01 * cool)
-    b = np.clip(v * (1.0 + 0.04 * cool), 0.0, 1.0)
+    lum = 0.015 + 0.38 * (v ** 1.2)
+    r = np.clip(lum * (1.0 - 0.04 * tint), 0.0, 1.0)
+    g = np.clip(lum * (1.0 - 0.01 * abs(tint)), 0.0, 1.0)
+    b = np.clip(lum * (1.0 + 0.05 * tint), 0.0, 1.0)
     rgb = np.stack([r, g, b], axis=-1)
     return (rgb * 255.0).astype(np.uint8)
 
@@ -81,186 +83,241 @@ def coords() -> tuple[np.ndarray, np.ndarray]:
     return np.meshgrid(xs, ys)
 
 
-def vignette(x: np.ndarray, y: np.ndarray, strength: float = 0.45) -> np.ndarray:
+def vignette(x: np.ndarray, y: np.ndarray, strength: float = 0.55) -> np.ndarray:
     dx = x - 0.5
     dy = y - 0.5
-    d = np.sqrt(dx * dx + dy * dy) / 0.75
+    d = np.sqrt(dx * dx + dy * dy) / 0.72
     return 1.0 - strength * np.clip(d * d, 0.0, 1.0)
 
 
-# --- Shader styles (integer harmonics only → seamless) --------------------
+# --- New pattern set (integer harmonics only → seamless) ------------------
 
 
-def shader_soft_flow(frame: int) -> np.ndarray:
+def shader_ink_ripple(frame: int) -> np.ndarray:
+    """Concentric ink ripples expanding from slightly offset centers."""
     x, y = coords()
     th = phase(frame)
-    tx = 0.35 * math.cos(th)
-    ty = 0.35 * math.sin(th)
-    n1 = fbm(x * 2.4 + tx, y * 2.0 + ty, octaves=4)
-    n2 = fbm(x * 3.2 - ty * 0.8, y * 2.6 + tx * 0.8, octaves=3)
-    field = 0.55 * n1 + 0.45 * n2
-    lum = 0.28 + 0.40 * field
-    lum *= vignette(x, y, 0.35)
-    breath = 0.04 * math.sin(th)  # harmonic 1
-    return gray_rgb(lum + breath, cool=0.6)
+    field = np.zeros((LH, LW), dtype=np.float64)
+    centers = [
+        (0.42 + 0.08 * math.cos(th), 0.48 + 0.06 * math.sin(th), 14.0, 1),
+        (0.62 + 0.07 * math.sin(th), 0.55 + 0.05 * math.cos(th), 10.0, -1),
+        (0.50 + 0.05 * math.cos(2 * th), 0.40 + 0.04 * math.sin(2 * th), 18.0, 2),
+    ]
+    for cx, cy, freq, harm in centers:
+        r = np.sqrt((x - cx) ** 2 + ((y - cy) * 1.15) ** 2)
+        field += 0.5 + 0.5 * np.sin(r * freq - harm * th)
+    field /= len(centers)
+    field *= vignette(x, y, 0.5)
+    return black_rgb(field, tint=0.3)
 
 
-def shader_drift_bands(frame: int) -> np.ndarray:
+def shader_hex_crawl(frame: int) -> np.ndarray:
+    """Soft hexagonal lattice that slowly breathes / crawls."""
     x, y = coords()
     th = phase(frame)
-    a = np.sin((x * 2.4 + y * 1.0) * math.pi * 2 + th) * 0.5 + 0.5
-    b = np.sin((x * -1.2 + y * 2.0) * math.pi * 2 - th) * 0.5 + 0.5
-    n = fbm(x * 1.5 + 0.2 * math.cos(th), y * 1.5 + 0.2 * math.sin(th), 3)
-    field = 0.45 * a + 0.35 * b + 0.20 * n
-    lum = 0.26 + 0.44 * field
-    lum *= vignette(x, y, 0.4)
-    return gray_rgb(lum, cool=0.4)
+    # Skewed hex-ish lattice via two sine sets
+    ox = 0.04 * math.sin(th)
+    oy = 0.04 * math.cos(th)
+    a = np.sin((x + ox) * math.pi * 8)
+    b = np.sin(((x * 0.5 + y * 0.866) + oy) * math.pi * 8)
+    c = np.sin(((x * 0.5 - y * 0.866) - ox) * math.pi * 8)
+    cells = (np.abs(a) * np.abs(b) * np.abs(c)) ** 0.35
+    edges = 1.0 - np.minimum(np.minimum(np.abs(a), np.abs(b)), np.abs(c))
+    edges = np.clip(edges ** 4, 0, 1)
+    n = fbm(x * 1.5 + ox, y * 1.5 + oy, 3)
+    field = 0.55 * cells + 0.25 * edges + 0.20 * n
+    field *= vignette(x, y, 0.48)
+    return black_rgb(field, tint=0.15)
 
 
-def shader_radial_pulse(frame: int) -> np.ndarray:
+def shader_vortex_spiral(frame: int) -> np.ndarray:
+    """Dark spiral arms rotating around center."""
+    x, y = coords()
+    th = phase(frame)
+    dx = x - 0.5
+    dy = (y - 0.5) * (LH / LW)
+    r = np.sqrt(dx * dx + dy * dy) + 1e-6
+    ang = np.arctan2(dy, dx)
+    arms = 0.5 + 0.5 * np.sin(ang * 3.0 - r * 22.0 + th)
+    arms2 = 0.5 + 0.5 * np.sin(ang * 5.0 + r * 14.0 - 2 * th)
+    fall = np.exp(-r * 2.2)
+    n = fbm(x * 2.0 + 0.12 * math.cos(th), y * 2.0 + 0.12 * math.sin(th), 3)
+    field = (0.5 * arms + 0.3 * arms2 + 0.2 * n) * (0.35 + 0.65 * fall)
+    return black_rgb(field, tint=0.4)
+
+
+def shader_rain_streaks(frame: int) -> np.ndarray:
+    """Diagonal rain / scratch streaks drifting seamlessly."""
+    x, y = coords()
+    th = phase(frame)
+    # Toroidal vertical drift via sin phase (no hard wrap jump)
+    drift = 0.35 * math.sin(th)
+    streak = x * 0.35 + y + drift
+    # Multiple streak layers at different frequencies
+    s1 = 0.5 + 0.5 * np.sin(streak * math.pi * 28 + th)
+    s2 = 0.5 + 0.5 * np.sin((x * 0.2 + y + 0.35 * math.sin(th + math.pi)) * math.pi * 18 - th)
+    # Thin the streaks
+    s1 = np.clip(s1 ** 4, 0, 1)
+    s2 = np.clip(s2 ** 3.5, 0, 1)
+    n = fbm(x * 1.8, y * 2.2 + 0.15 * math.cos(th), 3)
+    field = 0.50 * s1 + 0.35 * s2 + 0.30 * n
+    field *= vignette(x, y, 0.35)
+    return black_rgb(np.clip(field, 0, 1), tint=0.2)
+
+
+def shader_ember_embers(frame: int) -> np.ndarray:
+    """Sparse rising ember-like dots on deep black (dark charcoal sparks)."""
+    x, y = coords()
+    th = phase(frame)
+    field = np.zeros((LH, LW), dtype=np.float64)
+    # Deterministic ember positions orbiting / rising on closed paths
+    rng = np.random.RandomState(42)
+    for i in range(28):
+        base_x = float(rng.random())
+        base_y = float(rng.random())
+        speed = 1 if i % 2 == 0 else 2
+        amp = 0.04 + 0.03 * (i % 3)
+        cx = (base_x + amp * math.sin(th * speed + i * 0.7)) % 1.0
+        # Rise with seamless sin so it doesn't jump at wrap
+        cy = (base_y + 0.12 * math.sin(th * speed + i * 1.3)) % 1.0
+        # Toroidal distance
+        dx = np.abs(x - cx)
+        dx = np.minimum(dx, 1.0 - dx)
+        dy = np.abs(y - cy)
+        dy = np.minimum(dy, 1.0 - dy)
+        d2 = dx * dx + dy * dy
+        sigma = 0.012 + 0.008 * (i % 4) / 3
+        pulse = 0.55 + 0.45 * math.sin(th * speed + i)
+        field += pulse * np.exp(-d2 / (2 * sigma * sigma))
+    field = np.clip(field / 1.6, 0, 1)
+    # Faint under-fog
+    fog = fbm(x * 1.4 + 0.1 * math.cos(th), y * 1.4 + 0.1 * math.sin(th), 3)
+    field = 0.85 * field + 0.15 * fog * 0.55
+    field *= vignette(x, y, 0.45)
+    return black_rgb(field, tint=-0.25)  # slight warm charcoal
+
+
+def shader_cross_hatch(frame: int) -> np.ndarray:
+    """Animated cross-hatch / etch lines on black."""
+    x, y = coords()
+    th = phase(frame)
+    ox = 0.05 * math.sin(th)
+    oy = 0.05 * math.cos(th)
+    h1 = np.sin((x + y + ox) * math.pi * 16)
+    h2 = np.sin((x - y + oy) * math.pi * 16)
+    # Thin line look
+    l1 = np.clip(1.0 - np.abs(h1) * 8.0, 0, 1) ** 2
+    l2 = np.clip(1.0 - np.abs(h2) * 8.0, 0, 1) ** 2
+    # Phase-modulated visibility
+    m1 = 0.5 + 0.5 * math.sin(th)
+    m2 = 0.5 + 0.5 * math.sin(th + math.pi / 2)
+    n = fbm(x * 1.6 + ox, y * 1.6 + oy, 3)
+    field = 0.55 * (m1 * l1 + m2 * l2) + 0.40 * n
+    field *= vignette(x, y, 0.45)
+    return black_rgb(np.clip(field, 0, 1), tint=0.1)
+
+
+def shader_horizon_wave(frame: int) -> np.ndarray:
+    """Stacked horizontal wave layers like dark dunes / signal waves."""
+    x, y = coords()
+    th = phase(frame)
+    field = np.zeros((LH, LW), dtype=np.float64)
+    for i, (amp, freq, harm, y0) in enumerate(
+        [
+            (0.06, 3.0, 1, 0.30),
+            (0.05, 5.0, 1, 0.45),
+            (0.04, 4.0, 2, 0.60),
+            (0.035, 6.0, 2, 0.72),
+        ]
+    ):
+        wave_y = y0 + amp * np.sin(x * math.pi * freq + harm * th + i)
+        dist = np.abs(y - wave_y)
+        field += np.exp(-((dist / 0.035) ** 2)) * (0.7 - i * 0.1)
+        # Fill below wave faintly
+        below = np.clip((wave_y - y) * 4.0, 0, 1)
+        field += 0.08 * below
+    n = fbm(x * 1.5 + 0.1 * math.cos(th), y * 2.0 + 0.1 * math.sin(th), 3)
+    field = np.clip(0.7 * field + 0.3 * n * 0.5, 0, 1)
+    field *= vignette(x, y, 0.45)
+    return black_rgb(field, tint=0.35)
+
+
+def shader_caustic_cells(frame: int) -> np.ndarray:
+    """Dark caustic / cellular membrane look."""
+    x, y = coords()
+    th = phase(frame)
+    tx = 0.2 * math.cos(th)
+    ty = 0.2 * math.sin(th)
+    # Domain warp then cellular-ish abs-noise
+    wx = fbm(x * 1.8 + tx, y * 1.8 + ty, 3)
+    wy = fbm(x * 1.8 - ty + 2.3, y * 1.8 + tx + 1.1, 3)
+    qx = x * 3.5 + (wx - 0.5) * 1.8
+    qy = y * 3.0 + (wy - 0.5) * 1.8
+    n1 = value_noise(qx, qy)
+    n2 = value_noise(qx + 3.7, qy + 1.9)
+    cells = 1.0 - np.abs(n1 - n2) * 2.0
+    cells = np.clip(cells, 0, 1) ** 1.6
+    field = cells * vignette(x, y, 0.5)
+    return black_rgb(field, tint=0.25)
+
+
+def shader_radar_sweep(frame: int) -> np.ndarray:
+    """Dark radar / clock-hand sweep with faint rings."""
     x, y = coords()
     th = phase(frame)
     dx = x - 0.5
     dy = (y - 0.5) * (LH / LW)
     r = np.sqrt(dx * dx + dy * dy)
-    rings = 0.5 + 0.5 * np.sin(r * 18.0 - th)       # harmonic 1
-    soft = 0.5 + 0.5 * np.sin(r * 7.0 + 2.0 * th)   # harmonic 2 (was 0.5!)
-    n = fbm(x * 2.0 + 0.15 * math.cos(th), y * 2.0 + 0.15 * math.sin(th), 3)
-    field = 0.5 * rings + 0.3 * soft + 0.2 * n
-    lum = 0.24 + 0.48 * field * (1.0 - 0.45 * np.clip(r * 1.6, 0, 1))
-    return gray_rgb(lum, cool=0.7)
+    ang = np.arctan2(dy, dx)  # [-π, π]
+    # Soft wedge following phase (seamless because ang wraps and th is 2π-periodic)
+    # Distance on circle between ang and th
+    delta = (ang - th + math.pi) % (2 * math.pi) - math.pi
+    wedge = np.exp(-((delta / 0.35) ** 2))
+    # Faint trail behind
+    delta2 = (ang - th + math.pi + 0.5) % (2 * math.pi) - math.pi
+    trail = 0.35 * np.exp(-((delta2 / 0.9) ** 2))
+    rings = 0.5 + 0.5 * np.sin(r * 28.0 - 2 * th)
+    rings = np.clip(rings ** 4, 0, 1) * 0.45
+    n = fbm(x * 1.5, y * 1.5, 2)
+    field = (0.55 * wedge + 0.25 * trail + rings + 0.15 * n) * np.clip(1.0 - r * 1.3, 0.15, 1)
+    return black_rgb(field, tint=0.45)
 
 
-def shader_scan_wrap(frame: int) -> np.ndarray:
+def shader_pixel_static(frame: int) -> np.ndarray:
+    """Coarse blocky static that slowly morphs (CRT / void noise)."""
     x, y = coords()
     th = phase(frame)
-    band_y = 0.5 + 0.42 * math.sin(th)
-    dist = np.abs(y - band_y)
-    dist = np.minimum(dist, 1.0 - dist)
-    band = np.exp(-((dist / 0.08) ** 2))
-    n = fbm(x * 2.5 + 0.25 * math.cos(th), y * 2.5 + 0.25 * math.sin(th), 3)
-    base = 0.27 + 0.26 * n
-    lum = base + 0.22 * band
-    band2_y = 0.5 + 0.42 * math.sin(th + math.pi)
-    dist2 = np.minimum(np.abs(y - band2_y), 1.0 - np.abs(y - band2_y))
-    lum += 0.08 * np.exp(-((dist2 / 0.12) ** 2))
-    lum *= vignette(x, y, 0.3)
-    return gray_rgb(lum, cool=0.5)
-
-
-def shader_smoke_warp(frame: int) -> np.ndarray:
-    x, y = coords()
-    th = phase(frame)
-    cx = 0.22 * math.cos(th)
-    cy = 0.22 * math.sin(th)
-    wx = fbm(x * 1.4 + cx, y * 1.4 + cy, 3)
-    wy = fbm(x * 1.4 - cy + 3.1, y * 1.4 + cx + 1.7, 3)
-    qx = x * 2.6 + (wx - 0.5) * 1.4 + cx
-    qy = y * 2.2 + (wy - 0.5) * 1.4 + cy
-    field = fbm(qx, qy, 4)
-    lum = 0.22 + 0.50 * (field ** 1.15)
-    lum *= vignette(x, y, 0.38)
-    return gray_rgb(lum, cool=0.8)
-
-
-def shader_grid_shimmer(frame: int) -> np.ndarray:
-    x, y = coords()
-    th = phase(frame)
-    ox = 0.05 * math.sin(th)
-    oy = 0.05 * math.cos(th)
-    # Coarser grid compresses far better in GIF
-    gx = np.sin((x + ox) * math.pi * 10) ** 2
-    gy = np.sin((y + oy) * math.pi * 6) ** 2
-    lines = np.maximum((1.0 - gx) ** 6, (1.0 - gy) ** 6)
-    n = fbm(x * 1.4 + ox * 2, y * 1.4 + oy * 2, 3)
-    field = 0.65 * n + 0.35 * lines
-    lum = 0.25 + 0.38 * field
-    lum *= vignette(x, y, 0.42)
-    return gray_rgb(lum, cool=0.55)
-
-
-def shader_aurora_gray(frame: int) -> np.ndarray:
-    x, y = coords()
-    th = phase(frame)
-    # Integer harmonics only
-    r1 = np.sin(x * math.pi * 3 + th + 0.6 * np.sin(y * 4 + th))
-    r2 = np.sin(x * math.pi * 5 - th + 0.4 * np.sin(y * 3 - th))
-    ribbons = 0.5 * (0.5 + 0.5 * r1) + 0.5 * (0.5 + 0.5 * r2)
-    height = 0.55 + 0.45 * np.sin(y * math.pi)
-    n = fbm(x * 2.0 + 0.2 * math.cos(th), y * 1.5 + 0.2 * math.sin(th), 3)
-    field = ribbons * height * 0.75 + n * 0.25
-    lum = 0.24 + 0.48 * field
-    lum *= vignette(x, y, 0.32)
-    return gray_rgb(lum, cool=0.9)
-
-
-def shader_soft_wash(frame: int) -> np.ndarray:
-    """Large soft gray wash — replaces noisy grain (GIF-hostile)."""
-    x, y = coords()
-    th = phase(frame)
-    n1 = fbm(x * 1.3 + 0.25 * math.cos(th), y * 1.1 + 0.25 * math.sin(th), 4)
-    n2 = fbm(x * 2.0 - 0.2 * math.sin(th), y * 1.8 + 0.2 * math.cos(th), 3)
-    field = 0.6 * n1 + 0.4 * n2
-    breath = 0.05 * math.sin(th)
-    lum = 0.30 + 0.36 * field + breath
-    lum *= vignette(x, y, 0.28)
-    return gray_rgb(lum, cool=0.35)
-
-
-def shader_orbit_blobs(frame: int) -> np.ndarray:
-    x, y = coords()
-    th = phase(frame)
-    field = np.zeros((LH, LW), dtype=np.float64)
-    # Integer speed multipliers only (1 or 2) so orbits close after one loop
-    blobs = [
-        (0.28, 1, 0.0, 0.18),
-        (0.20, 1, 2.1, 0.14),
-        (0.34, 2, 4.0, 0.20),
-        (0.16, 2, 1.2, 0.12),
-    ]
-    for radius, speed, offset, sigma in blobs:
-        cx = 0.5 + radius * math.cos(th * speed + offset)
-        cy = 0.5 + radius * math.sin(th * speed + offset) * 0.75
-        d2 = (x - cx) ** 2 + ((y - cy) * 1.1) ** 2
-        field += np.exp(-d2 / (2 * sigma * sigma))
-    n = fbm(x * 2.0 + 0.15 * math.cos(th), y * 2.0 + 0.15 * math.sin(th), 3)
-    field = 0.7 * np.clip(field / 1.8, 0, 1) + 0.3 * n
-    lum = 0.23 + 0.48 * field
-    lum *= vignette(x, y, 0.36)
-    return gray_rgb(lum, cool=0.5)
-
-
-def shader_metal_sheen(frame: int) -> np.ndarray:
-    x, y = coords()
-    th = phase(frame)
-    diag = x * 0.85 + y * 0.55
-    sheen = 0.5 + 0.5 * np.sin(diag * math.pi * 4 + th)
-    sheen2 = 0.5 + 0.5 * np.sin(diag * math.pi * 2 - th)
-    brush = 0.5 + 0.5 * np.sin(y * math.pi * 24 + math.sin(th))
-    n = fbm(x * 1.3, y * 2.0 + 0.1 * math.sin(th), 3)
-    field = 0.4 * sheen + 0.25 * sheen2 + 0.15 * brush + 0.20 * n
-    lum = 0.26 + 0.42 * field
-    lum *= vignette(x, y, 0.4)
-    return gray_rgb(lum, cool=0.25)
+    # Block-quantize coords
+    bx = np.floor(x * 24) / 24
+    by = np.floor(y * 14) / 14
+    # Loopable: mix two hashes with sin/cos weights
+    w = 0.5 + 0.5 * math.sin(th)
+    n_a = fbm(bx * 3.0 + 0.3 * math.cos(th), by * 3.0 + 0.3 * math.sin(th), 2)
+    n_b = fbm(bx * 3.0 + 1.7 - 0.3 * math.sin(th), by * 3.0 + 2.1 + 0.3 * math.cos(th), 2)
+    field = (1 - w) * n_a + w * n_b
+    # Occasional darker bars
+    bar = 0.5 + 0.5 * np.sin(y * math.pi * 6 + th)
+    field *= 0.7 + 0.3 * bar
+    field *= vignette(x, y, 0.6)
+    return black_rgb(field, tint=0.05)
 
 
 SHADERS = [
-    ("soft_flow", shader_soft_flow),
-    ("drift_bands", shader_drift_bands),
-    ("radial_pulse", shader_radial_pulse),
-    ("scan_wrap", shader_scan_wrap),
-    ("smoke_warp", shader_smoke_warp),
-    ("grid_shimmer", shader_grid_shimmer),
-    ("aurora_gray", shader_aurora_gray),
-    ("soft_wash", shader_soft_wash),
-    ("orbit_blobs", shader_orbit_blobs),
-    ("metal_sheen", shader_metal_sheen),
+    ("ink_ripple", shader_ink_ripple),
+    ("hex_crawl", shader_hex_crawl),
+    ("vortex_spiral", shader_vortex_spiral),
+    ("rain_streaks", shader_rain_streaks),
+    ("ember_sparks", shader_ember_embers),
+    ("cross_hatch", shader_cross_hatch),
+    ("horizon_wave", shader_horizon_wave),
+    ("caustic_cells", shader_caustic_cells),
+    ("radar_sweep", shader_radar_sweep),
+    ("pixel_static", shader_pixel_static),
 ]
 
 
 def to_gif_frame(rgb: np.ndarray, palette_img: Image.Image | None = None) -> Image.Image:
     img = Image.fromarray(rgb, mode="RGB")
-    # Mild blur before upscale → fewer unique colors → smaller GIF
     img = img.resize((LW // 2, LH // 2), Image.BILINEAR).resize((LW, LH), Image.BILINEAR)
     up = img.resize((W, H), Image.BILINEAR)
     if palette_img is not None:
@@ -269,7 +326,6 @@ def to_gif_frame(rgb: np.ndarray, palette_img: Image.Image | None = None) -> Ima
 
 
 def save_gif(path: Path, render_fn) -> None:
-    # Build a shared palette from a mid-loop frame for stabler deltas
     mid = to_gif_frame(render_fn(FRAMES // 2))
     frames = [to_gif_frame(render_fn(i), palette_img=mid) for i in range(FRAMES)]
     frames[0].save(
@@ -281,14 +337,13 @@ def save_gif(path: Path, render_fn) -> None:
         optimize=True,
         disposal=1,
     )
-    # Lossy gifsicle pass — big win on soft gradient shaders
     try:
         tmp = path.with_suffix(".opt.gif")
         subprocess.run(
             [
                 "gifsicle",
                 "-O3",
-                "--lossy=40",
+                "--lossy=45",
                 "--colors",
                 str(PALETTE),
                 "-o",
