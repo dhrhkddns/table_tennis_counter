@@ -1,7 +1,7 @@
-"""_gen_readable_digits.py 기반 — 검은 배경을 따로 두고 1:3 패널을 올린다.
+"""_gen_readable_digits.py 기반 — 원본과 같은 검은 셰비 배경 위에 패널 2개.
 
-검은색 배경은 make_black_background()로 별도 생성(또는 shader_backgrounds GIF에서
-로드)한 뒤, width:height = 1:3 직사각형 랭킹 패널을 가운데 합성한다.
+배경은 shader_bg + 바운스 볼(make_base_frame)이며,
+세로형 패널 2개를 나란히 올린다. 텍스트·내부 사각형 없음.
 """
 
 from PIL import Image, ImageDraw, ImageChops
@@ -16,23 +16,18 @@ FRAME_MS = int(1000 / FPS)
 # 논리 캔버스 (검은 배경이 채움). 패널은 그 위에 1:3으로 올린다.
 PX_W, PX_H = 320, 180
 
-# width:height = 1:3 직사각형 패널 (세로로 긴 사이드바형)
-PW, PH = 60, 180  # 60:180 = 1:3
-assert PW * 3 == PH, f"panel must be 1:3, got {PW}x{PH}"
+# 패널 크기 (논리 캔버스 기준, 최종은 W×H로 업스케일)
+#   PW = 가로  /  PH = 세로  ← 세로 줄이려면 PH만 낮추면 됨
+PW, PH = 80, 160
 
-# 패널을 검은 캔버스 가로 중앙·세로 풀높이에 배치
-PX0 = (PX_W - PW) // 2
+PANEL_COUNT = 2
+PANEL_GAP = 24  # 두 패널 사이 간격
+_total_w = PW * PANEL_COUNT + PANEL_GAP * (PANEL_COUNT - 1)
+PX0S = [(PX_W - _total_w) // 2 + i * (PW + PANEL_GAP) for i in range(PANEL_COUNT)]
 PY0 = (PX_H - PH) // 2
 
 R = 6
 BORDER_W = 3
-
-# 검은 배경 소스:
-#   "solid"  — 순수 검정 Image.new
-#   "shader" — shader_backgrounds/ 의 GIF 프레임을 따로 로드
-BLACK_BG_SOURCE = "solid"
-SHADER_BG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shader_backgrounds")
-SHADER_BG_FILE = "shader_bg_01_ink_ripple.gif"  # BLACK_BG_SOURCE == "shader" 일 때
 
 PANELS = [
     ("01_red", (235, 95, 95), (175, 45, 50)),
@@ -47,7 +42,7 @@ PANELS = [
     ("10_slate", (140, 155, 175), (85, 100, 120)),
 ]
 PANEL_COLOR = "green"
-PREVIEW = False  # True면 pygame으로 미리보기 (헤드리스에선 False 권장)
+PREVIEW = True  # True면 pygame으로 미리보기
 
 GRAYS = [
     (60, 62, 68),
@@ -57,117 +52,15 @@ GRAYS = [
     (150, 154, 160),
     (90, 94, 100),
 ]
-
-RANK_COUNT = 16
-COLOR_BLUE = (50, 130, 255)
-COLOR_WHITE = (255, 255, 255)
-COLOR_RED = (255, 55, 55)
-NUM_COL_W = 22
-DIGIT_W, DIGIT_H = 6, 7
-DIGIT_GAP = 1
-TEXT_NUDGE_X = 2
-
-
-def rank_color(rank):
-    if rank <= 4:
-        return COLOR_BLUE
-    if rank <= 13:
-        return COLOR_WHITE
-    return COLOR_RED
-
-
-DIGIT = {
-    "0": [
-        "011110",
-        "110011",
-        "110011",
-        "110011",
-        "110011",
-        "110011",
-        "011110",
-    ],
-    "1": [
-        "001100",
-        "011100",
-        "001100",
-        "001100",
-        "001100",
-        "001100",
-        "011110",
-    ],
-    "2": [
-        "011110",
-        "110011",
-        "000011",
-        "001110",
-        "011000",
-        "110000",
-        "111111",
-    ],
-    "3": [
-        "011110",
-        "110011",
-        "000011",
-        "001110",
-        "000011",
-        "110011",
-        "011110",
-    ],
-    "4": [
-        "001100",
-        "011100",
-        "110100",
-        "110100",
-        "111111",
-        "000100",
-        "000100",
-    ],
-    "5": [
-        "111111",
-        "110000",
-        "111110",
-        "000011",
-        "000011",
-        "110011",
-        "011110",
-    ],
-    "6": [
-        "011110",
-        "110000",
-        "110000",
-        "111110",
-        "110011",
-        "110011",
-        "011110",
-    ],
-    "7": [
-        "111111",
-        "000011",
-        "000110",
-        "001100",
-        "011000",
-        "011000",
-        "011000",
-    ],
-    "8": [
-        "011110",
-        "110011",
-        "110011",
-        "011110",
-        "110011",
-        "110011",
-        "011110",
-    ],
-    "9": [
-        "011110",
-        "110011",
-        "110011",
-        "011111",
-        "000011",
-        "000011",
-        "011110",
-    ],
-}
+BALL_COLORS = [
+    ((255, 70, 70), (190, 30, 30)),
+    ((255, 150, 50), (200, 90, 20)),
+    ((255, 220, 60), (200, 160, 25)),
+    ((80, 210, 90), (40, 140, 50)),
+    ((70, 140, 255), (35, 80, 190)),
+    ((180, 80, 220), (120, 40, 160)),
+    ((245, 248, 255), (175, 185, 205)),
+]
 
 
 def clamp(v, a=0.0, b=1.0):
@@ -185,6 +78,29 @@ def gray_at(u):
     i = int(x) % n
     f = x - int(x)
     return mix(GRAYS[i], GRAYS[(i + 1) % n], f)
+
+
+def hsv(h, s, v):
+    h = h % 1.0
+    i = int(h * 6)
+    f = h * 6 - i
+    p = v * (1 - s)
+    q = v * (1 - f * s)
+    t = v * (1 - (1 - f) * s)
+    i %= 6
+    if i == 0:
+        r, g, b = v, t, p
+    elif i == 1:
+        r, g, b = q, v, p
+    elif i == 2:
+        r, g, b = p, v, t
+    elif i == 3:
+        r, g, b = p, q, v
+    elif i == 4:
+        r, g, b = t, p, v
+    else:
+        r, g, b = v, p, q
+    return (int(clamp(r) * 255), int(clamp(g) * 255), int(clamp(b) * 255))
 
 
 def rounded_mask(w, h, r):
@@ -211,124 +127,132 @@ for ly in range(PH):
             border_meta.append((lx, ly, ang))
 
 
-def make_black_background(w=PX_W, h=PX_H):
-    """검은색 배경을 패널과 분리해서 따로 만든다."""
-    return Image.new("RGB", (w, h), (0, 0, 0))
+def gravity_bounce(u):
+    return (4.0 * u * (1.0 - u)) ** 0.92
 
 
-def load_black_background_frames(n=N, w=PX_W, h=PX_H):
-    """
-    검은 배경을 따로 가져온다.
-    - solid: 순수 검정 프레임 n장
-    - shader: shader_backgrounds GIF를 로드해 리사이즈·루프
-    """
-    source = (BLACK_BG_SOURCE or "solid").strip().lower()
-    if source == "solid":
-        return [make_black_background(w, h) for _ in range(n)]
-
-    if source != "shader":
-        raise SystemExit(f"Unknown BLACK_BG_SOURCE={BLACK_BG_SOURCE!r}. Use solid or shader")
-
-    path = os.path.join(SHADER_BG_DIR, SHADER_BG_FILE)
-    if not os.path.isfile(path):
-        print(f"shader bg missing ({path}), falling back to solid black")
-        return [make_black_background(w, h) for _ in range(n)]
-
-    frames = []
-    with Image.open(path) as img:
-        try:
-            while True:
-                frames.append(img.convert("RGB").resize((w, h), Image.Resampling.NEAREST))
-                img.seek(img.tell() + 1)
-        except EOFError:
-            pass
-    if not frames:
-        return [make_black_background(w, h) for _ in range(n)]
-    return [frames[i % len(frames)].copy() for i in range(n)]
+def make_balls():
+    ground = PX_H - 18
+    xs = [36, 80, 124, 168, 212, 256, 290]
+    amps = [46, 40, 52, 44, 48, 38, 50]
+    cycles = [3, 3, 3, 4, 3, 3, 4]
+    phases = [0.00, 0.12, 0.28, 0.40, 0.55, 0.70, 0.85]
+    rs = [1.9, 1.7, 2.0, 1.8, 1.85, 1.75, 1.95]
+    x_amps = [4, 5, 3, 5, 4, 5, 3]
+    return [
+        {
+            "x": xs[i],
+            "ground": ground,
+            "amp": amps[i],
+            "cycles": cycles[i],
+            "phase": phases[i],
+            "r": rs[i],
+            "x_amp": x_amps[i],
+            "x_cycles": 1,
+            "light": BALL_COLORS[i][0],
+            "dark": BALL_COLORS[i][1],
+        }
+        for i in range(7)
+    ]
 
 
-def blit_digit(mask, ch, x, y):
-    pattern = DIGIT[ch]
-    pix = mask.load()
-    for dy, row in enumerate(pattern):
-        for dx, bit in enumerate(row):
-            if bit == "1":
-                xx, yy = x + dx, y + dy
-                if 0 <= xx < PW and 0 <= yy < PH:
-                    pix[xx, yy] = 255
+def ball_at(b, frame_i):
+    u = (frame_i / N * b["cycles"] + b["phase"]) % 1.0
+    h = gravity_bounce(u)
+    if h < 0.16:
+        k = h / 0.16
+        squash = 0.55 + 0.45 * k
+        stretch = 1.35 - 0.35 * k
+    elif h > 0.82:
+        squash, stretch = 1.1, 0.9
+    else:
+        squash, stretch = 1.0, 1.0
+    y = b["ground"] - b["r"] * squash - h * b["amp"]
+    xu = (frame_i / N * b["x_cycles"] + b["phase"] * 0.5) % 1.0
+    x = b["x"] + math.sin(xu * math.pi * 2) * b["x_amp"]
+    return x, y, b["r"] * stretch, b["r"] * squash, h, b["light"], b["dark"]
 
 
-def build_rank_text_layers(_frame_i=0):
-    mask = Image.new("L", (PW, PH), 0)
-    blue_m = Image.new("L", (PW, PH), 0)
-    white_m = Image.new("L", (PW, PH), 0)
-    red_m = Image.new("L", (PW, PH), 0)
-    left = BORDER_W + 3
-    top = BORDER_W + 2
-    bottom = PH - BORDER_W - 2
-    row_h = (bottom - top) / RANK_COUNT
-
-    for i in range(RANK_COUNT):
-        rank = i + 1
-        label = str(rank)
-        row_cy = top + (i + 0.5) * row_h
-        total_w = len(label) * DIGIT_W + (len(label) - 1) * DIGIT_GAP
-        tx = left + NUM_COL_W - total_w - 1 - TEXT_NUDGE_X
-        ty = int(row_cy - DIGIT_H / 2)
-        ty = max(int(top + i * row_h) + 1, min(ty, int(top + (i + 1) * row_h) - DIGIT_H - 1))
-        row_mask = Image.new("L", (PW, PH), 0)
-        x = tx
-        for ch in label:
-            blit_digit(row_mask, ch, x, ty)
-            x += DIGIT_W + DIGIT_GAP
-        row_mask = ImageChops.multiply(row_mask, INNER_M)
-        mask = ImageChops.lighter(mask, row_mask)
-        col = rank_color(rank)
-        if col == COLOR_BLUE:
-            blue_m = ImageChops.lighter(blue_m, row_mask)
-        elif col == COLOR_RED:
-            red_m = ImageChops.lighter(red_m, row_mask)
-        else:
-            white_m = ImageChops.lighter(white_m, row_mask)
-
-    rgb = Image.new("RGB", (PW, PH), (0, 0, 0))
-    rgb.paste(Image.new("RGB", (PW, PH), COLOR_BLUE), mask=blue_m)
-    rgb.paste(Image.new("RGB", (PW, PH), COLOR_WHITE), mask=white_m)
-    rgb.paste(Image.new("RGB", (PW, PH), COLOR_RED), mask=red_m)
-    return rgb, mask, blue_m, white_m, red_m
+def draw_ball(draw, x, y, rx, ry, h, light, dark):
+    hi = mix(light, (255, 255, 255), 0.45)
+    draw.ellipse([x - rx, y - ry, x + rx, y + ry], fill=light)
+    draw.ellipse([x - rx + 0.5, y, x + rx - 0.5, y + ry], fill=dark)
+    draw.ellipse(
+        [x - rx * 0.55, y - ry * 0.7, x - rx * 0.05, y - ry * 0.12], fill=hi
+    )
+    sw = rx * (1.25 - 0.6 * h)
+    sh = max(1, 1.2 + (1 - h))
+    gy = y + ry + 2
+    draw.ellipse([x - sw, gy - sh * 0.3, x + sw, gy + sh], fill=(18, 18, 22))
 
 
-def draw_rank_chrome(panel_img, frame_i):
-    draw = ImageDraw.Draw(panel_img)
-    left = BORDER_W + 2
-    right = PW - BORDER_W - 3
-    top = BORDER_W + 2
-    bottom = PH - BORDER_W - 2
-    row_h = (bottom - top) / RANK_COUNT
-    line_x0 = left + NUM_COL_W
+def shader_bg(t):
+    """원본과 동일한 다크 셰비 배경."""
+    img = Image.new("RGB", (PX_W, PX_H), (0, 0, 0))
+    pix = img.load()
+    for y in range(PX_H):
+        for x in range(PX_W):
+            nx, ny = x / PX_W, y / PX_H
+            cell = 10
+            cx = (x % cell) / cell
+            cy = (y % cell) / cell
+            diag = abs(cx - 0.5) + abs(cy - 0.5)
+            grid = 1.0 if diag < 0.35 else 0.0
+            wave1 = 0.5 + 0.5 * math.sin((nx * 6 + ny * 2 + t * 2) * math.pi * 2)
+            wave2 = 0.5 + 0.5 * math.sin((nx * -3 + ny * 7 - t * 1.5) * math.pi * 2)
+            ring = math.sin(math.hypot(nx - 0.5, ny - 0.5) * 18 - t * 2.5 * math.pi)
+            glow = 0.12 * wave1 * wave2 + 0.06 * max(0, ring) + 0.08 * grid * wave1
+            hh = 0.58 + 0.12 * wave2 + 0.05 * math.sin(t * math.pi * 2)
+            val = glow * 1.4
+            if y % 4 == 0:
+                val += 0.012 * (0.5 + 0.5 * math.sin(t * math.pi * 2 * 0.4))
+            dx, dy = nx - 0.5, ny - 0.5
+            vig = 1 - clamp((dx * dx + dy * dy) * 1.2, 0, 0.5)
+            val *= vig
+            pix[x, y] = (0, 0, 0) if val < 0.02 else hsv(hh % 1.0, 0.7, clamp(val))
+    return img
 
-    draw.rectangle([left, top, line_x0 - 1, bottom], fill=(0, 0, 0, 160))
 
-    sel = int(frame_i * RANK_COUNT / N) % RANK_COUNT
-    y0 = int(top + sel * row_h)
-    y1 = int(top + (sel + 1) * row_h)
-    draw.rectangle([left, y0, right, max(y0 + 1, y1 - 1)], fill=(0, 0, 0, 255))
+def make_base_frame(i, ball_hist):
+    """원본과 동일: shader 배경 + 상하 액센트 + 코너 + 볼."""
+    t = i / N
+    img = shader_bg(t)
+    pix = img.load()
+    draw = ImageDraw.Draw(img)
+    bar = 8
+    accent = (40, 70, 90)
+    for y in range(bar):
+        a = 0.22 * (1 - y / bar)
+        for x in range(PX_W):
+            pix[x, y] = mix(pix[x, y], accent, a)
+            pix[x, PX_H - 1 - y] = mix(pix[x, PX_H - 1 - y], accent, a)
+    blink = 0.55 + 0.35 * (0.5 + 0.5 * math.sin(t * math.pi * 2))
+    line = mix((50, 120, 140), (120, 230, 245), blink)
+    for x in range(PX_W):
+        pix[x, bar] = mix(pix[x, bar], line, 0.5)
+        pix[x, PX_H - 1 - bar] = mix(pix[x, PX_H - 1 - bar], line, 0.5)
+    WHITE = (220, 230, 240)
+    m, L = 5, 14
+    for ox, oy, sx, sy in [
+        (m, m, 1, 1),
+        (PX_W - m - 1, m, -1, 1),
+        (m, PX_H - m - 1, 1, -1),
+        (PX_W - m - 1, PX_H - m - 1, -1, -1),
+    ]:
+        for j in range(L):
+            pix[ox + j * sx, oy] = WHITE
+            pix[ox, oy + j * sy] = WHITE
+    for x, y, rx, ry, h, light, dark in sorted(ball_hist[i], key=lambda p: p[1]):
+        draw_ball(draw, x, y, rx, ry, h, light, dark)
+    return img, t
 
-    for i in range(RANK_COUNT + 1):
-        yy = int(top + i * row_h)
-        draw.line([(line_x0, yy), (right, yy)], fill=(0, 0, 0, 255), width=1)
 
-
-def draw_panel_on_black(black_bg, t, light, dark, frame_i):
-    """따로 가져온 검은 배경 위에 1:3 패널을 합성한다."""
-    layer = Image.new("RGBA", (PX_W, PX_H), (0, 0, 0, 0))
-
-    # 패널 그림자
+def blit_one_panel(layer, px0, py0, t, light, dark):
+    """레이어에 패널 하나(그라데이션+테두리)만 그린다."""
     sh = Image.new("RGBA", (PW, PH), (0, 0, 0, 70))
     sh.putalpha(OUTER_M)
-    layer.paste(sh, (PX0 + 2, PY0 + 3), sh)
+    layer.paste(sh, (px0 + 2, py0 + 3), sh)
 
-    # 패널 본체(세로 그라데이션)
     im = INNER_M.load()
     shaded = Image.new("RGBA", (PW, PH), (0, 0, 0, 0))
     sp = shaded.load()
@@ -338,17 +262,8 @@ def draw_panel_on_black(black_bg, t, light, dark, frame_i):
         for lx in range(PW):
             if im[lx, ly] > 0:
                 sp[lx, ly] = (*col, 235)
-    layer.paste(shaded, (PX0, PY0), shaded)
+    layer.paste(shaded, (px0, py0), shaded)
 
-    # 랭킹 크롬
-    panel_local = Image.new("RGBA", (PW, PH), (0, 0, 0, 0))
-    draw_rank_chrome(panel_local, frame_i)
-    r, g, b, a = panel_local.split()
-    a = ImageChops.multiply(a, INNER_M)
-    panel_local = Image.merge("RGBA", (r, g, b, a))
-    layer.paste(panel_local, (PX0, PY0), panel_local)
-
-    # 테두리 쉬머
     border = Image.new("RGBA", (PW, PH), (0, 0, 0, 0))
     bp = border.load()
     for lx, ly, ang in border_meta:
@@ -356,49 +271,15 @@ def draw_panel_on_black(black_bg, t, light, dark, frame_i):
         shimmer = 0.85 + 0.15 * math.sin((ang * 4 + t * 2) * math.pi * 2)
         gcol = tuple(int(clamp(c * shimmer, 0, 255)) for c in gcol)
         bp[lx, ly] = (*gcol, 255)
-    layer.paste(border, (PX0, PY0), border)
-
-    return Image.alpha_composite(black_bg.convert("RGBA"), layer).convert("RGB")
+    layer.paste(border, (px0, py0), border)
 
 
-def stamp_rank_text(rgb_img, text_rgb_full, mask_full):
-    rgb_img.paste(text_rgb_full, mask=mask_full)
-    return rgb_img
-
-
-def force_palette_rank_colors(img_p):
-    pal = img_p.getpalette()
-    if not pal:
-        return img_p
-    pal = list(pal) + [0] * (768 - len(pal))
-    for i in range(256):
-        r, g, b = pal[i * 3], pal[i * 3 + 1], pal[i * 3 + 2]
-        if r >= 250 and g >= 250 and b >= 250:
-            pal[i * 3 : i * 3 + 3] = list(COLOR_WHITE)
-    pal[253 * 3 : 253 * 3 + 3] = list(COLOR_BLUE)
-    pal[254 * 3 : 254 * 3 + 3] = list(COLOR_RED)
-    pal[255 * 3 : 255 * 3 + 3] = list(COLOR_WHITE)
-    img_p.putpalette(pal[:768])
-    return img_p
-
-
-def stamp_rank_colors_on_p(img_p, blue_big, white_big, red_big):
-    pix = list(img_p.getdata())
-    bdat = blue_big.getdata()
-    wdat = white_big.getdata()
-    rdat = red_big.getdata()
-    out = []
-    for p, b, w, r in zip(pix, bdat, wdat, rdat):
-        if b:
-            out.append(253)
-        elif r:
-            out.append(254)
-        elif w:
-            out.append(255)
-        else:
-            out.append(p)
-    img_p.putdata(out)
-    return img_p
+def draw_panels_on_bg(base_img, t, light, dark):
+    """원본 배경 위에 1:3 패널 2개를 나란히 합성한다."""
+    layer = Image.new("RGBA", (PX_W, PX_H), (0, 0, 0, 0))
+    for px0 in PX0S:
+        blit_one_panel(layer, px0, PY0, t, light, dark)
+    return Image.alpha_composite(base_img.convert("RGBA"), layer).convert("RGB")
 
 
 def resolve_panels(color_key):
@@ -447,7 +328,7 @@ def preview_gif(path):
     idx = 0
     acc = 0
     running = True
-    print(f"Preview: {path}  (ESC to close)")
+    print(f"Preview: {path}  (ESC to close)", flush=True)
     while running:
         dt = clock.tick(60)
         acc += dt
@@ -470,53 +351,27 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     panels = resolve_panels(PANEL_COLOR)
     print(
-        f"Black BG ({BLACK_BG_SOURCE}) {PX_W}x{PX_H} | "
-        f"Panel {PW}x{PH} (1:3) @ ({PX0},{PY0}) | "
-        f"PANEL_COLOR={PANEL_COLOR!r} → {[p[0] for p in panels]}"
+        f"Shader BG {PX_W}x{PX_H} | "
+        f"{PANEL_COUNT}× Panel {PW}x{PH} (1:3) @ x={PX0S}, y={PY0} | "
+        f"PANEL_COLOR={PANEL_COLOR!r} → {[p[0] for p in panels]}",
+        flush=True,
     )
 
-    # 검은 배경을 패널과 분리해서 미리 가져옴
-    print("Loading black backgrounds separately...")
-    black_bgs = load_black_background_frames(N, PX_W, PX_H)
-
-    print("Building digit layers...")
-    text_rgb, mask, blue_m, white_m, red_m = build_rank_text_layers(0)
-
-    def to_full(layer):
-        full = Image.new(layer.mode, (PX_W, PX_H), 0 if layer.mode == "L" else (0, 0, 0))
-        full.paste(layer, (PX0, PY0))
-        return full
-
-    text_full = to_full(text_rgb)
-    mask_full = to_full(mask)
-    blue_full = to_full(blue_m)
-    white_full = to_full(white_m)
-    red_full = to_full(red_m)
-
-    text_big = text_full.resize((W, H), Image.Resampling.NEAREST)
-    mask_big = mask_full.resize((W, H), Image.Resampling.NEAREST)
-    blue_big = blue_full.resize((W, H), Image.Resampling.NEAREST)
-    white_big = white_full.resize((W, H), Image.Resampling.NEAREST)
-    red_big = red_full.resize((W, H), Image.Resampling.NEAREST)
+    print("Building shader backgrounds + balls...", flush=True)
+    balls = make_balls()
+    ball_hist = [[ball_at(b, i) for b in balls] for i in range(N)]
+    bases = [make_base_frame(i, ball_hist) for i in range(N)]
 
     saved = []
     for name, light, dark in panels:
-        print(f"Rendering {name}...")
+        print(f"Rendering {name}...", flush=True)
         frames_p = []
-        for i, black_bg in enumerate(black_bgs):
-            t = i / N
-            framed = stamp_rank_text(
-                draw_panel_on_black(black_bg.copy(), t, light, dark, i),
-                text_full,
-                mask_full,
-            )
+        for img, t in bases:
+            framed = draw_panels_on_bg(img.copy(), t, light, dark)
             big = framed.resize((W, H), Image.Resampling.NEAREST)
-            big.paste(text_big, mask=mask_big)
             q = big.convert(
                 "P", palette=Image.Palette.ADAPTIVE, colors=192, dither=Image.Dither.NONE
             )
-            q = force_palette_rank_colors(q)
-            q = stamp_rank_colors_on_p(q, blue_big, white_big, red_big)
             frames_p.append(q)
         path = os.path.join(out_dir, f"game_ui_panel_1x3_{name}.gif")
         frames_p[0].save(
@@ -528,15 +383,15 @@ def main():
             optimize=False,
             disposal=2,
         )
-        print(f"  saved {path}")
+        print(f"  saved {path}", flush=True)
         saved.append(path)
-    print("done")
+    print("done", flush=True)
 
     if PREVIEW and saved:
         try:
             preview_gif(saved[0])
         except Exception as e:
-            print(f"Preview skipped: {e}")
+            print(f"Preview skipped: {e}", flush=True)
 
 
 if __name__ == "__main__":
