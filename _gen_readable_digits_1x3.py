@@ -9,7 +9,7 @@ import math
 import os
 
 W, H = 1920, 1080  # 최종 GIF 해상도
-FPS = 12
+FPS = 30
 N = FPS * 5
 FRAME_MS = int(1000 / FPS)
 
