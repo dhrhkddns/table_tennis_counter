@@ -3,7 +3,7 @@ import math  # 수학 함수 사용을 위한 math 모듈 임포트
 import os  # 시스템 경로 및 파일 관리를 위한 os 모듈 임포트
 
 W, H = 1920, 1080  # 최종 GIF 해상도 (가로, 세로)
-FPS = 12  # 초당 프레임 수
+FPS = 30  # 초당 프레임 수
 N = FPS * 5  # 총 프레임 수 (5초 분량)
 FRAME_MS = int(1000 / FPS)  # 각 프레임의 지속 시간(ms)
 PX_W, PX_H = 320, 180  # 패널의 내부 기본 해상도 (업스케일 전)
@@ -31,7 +31,24 @@ PANELS = [  # 여러 가지 패널 색상 테마 정의 (이름, 밝은색, 어�
 # 실행 시 적용할 패널 색 기본값 (문자열만 수정하면 색 바뀜)
 # 사용가능: red orange gold lime green teal cyan blue pink slate / all
 PANEL_COLOR = "green"  # 실행 시 기본 값: cyan
-PREVIEW = True  # True면 이미지 생성 후 pygame으로 결과 미리보기
+PREVIEW = True  # True면 픽셀을 실시간으로 찍어 pygame 미리보기
+SAVE_GIF = False  # True면 디스크에 GIF 저장 (느림). 미리보기만 볼 때는 False 권장
+# 배경 색 계열 10종: (이름, hue, sat, accent, line_lo, line_hi)
+# 미리보기에서 C 키로 순환
+BG_SCHEMES = [
+    ("cyan", 0.52, 0.70, (40, 70, 90), (50, 120, 140), (120, 230, 245)),
+    ("blue", 0.62, 0.72, (35, 55, 100), (60, 100, 180), (140, 190, 255)),
+    ("purple", 0.75, 0.68, (55, 40, 90), (100, 70, 160), (200, 150, 255)),
+    ("magenta", 0.90, 0.70, (80, 35, 70), (160, 60, 130), (255, 140, 210)),
+    ("red", 0.00, 0.72, (80, 30, 35), (160, 50, 50), (255, 120, 110)),
+    ("orange", 0.07, 0.75, (85, 50, 25), (180, 100, 40), (255, 190, 100)),
+    ("gold", 0.13, 0.70, (75, 60, 25), (170, 140, 40), (255, 230, 120)),
+    ("lime", 0.28, 0.68, (45, 75, 30), (90, 160, 50), (180, 245, 100)),
+    ("green", 0.38, 0.68, (30, 70, 50), (50, 150, 90), (120, 240, 170)),
+    ("slate", 0.58, 0.28, (45, 50, 58), (90, 100, 115), (180, 190, 205)),
+]
+# 사용가능: cyan blue purple magenta red orange gold lime green slate
+BG_SCHEME = "cyan"
 GRAYS = [  # 테두리/배경용 그레이 계열 그라데이션 컬러 모음
     (60, 62, 68),
     (110, 114, 122),
@@ -202,6 +219,21 @@ def gray_at(u):
     f = x - int(x)
     return mix(GRAYS[i], GRAYS[(i + 1) % n], f)
 
+def resolve_bg_scheme(color_key):
+    """배경 계열 이름 → (index, scheme 튜플)."""
+    key = (color_key or "").strip().lower()
+    for i, s in enumerate(BG_SCHEMES):
+        if s[0] == key:
+            return i, s
+    names = ", ".join(s[0] for s in BG_SCHEMES)
+    raise SystemExit(f"Unknown BG_SCHEME={color_key!r}. Use one of: {names}")
+
+def scheme_gray_at(u, scheme):
+    # 테두리에 배경 계열 accent를 살짝 섞어 전체 톤을 맞춤
+    g = gray_at(u)
+    accent = scheme[3]
+    return mix(g, accent, 0.22)
+
 def rounded_mask(w, h, r):
     # w*h 이미지에 반지름 r의 라운드 사각형 마스크(L) 반환
     m = Image.new("L", (w, h), 0)
@@ -363,83 +395,174 @@ def draw_ball(draw, x, y, rx, ry, h, light, dark):
     gy = y + ry + 2  # 바닥 하이라이트 y 위치
     draw.ellipse([x - sw, gy - sh * 0.3, x + sw, gy + sh], fill=(18, 18, 22))  # 바닥 그림자
 
-def shader_bg(t):
-    # 패널용 동적 배경 그리기 함수 (시간 t)
+def _hsv_np(h, s, v):
+    """벡터 HSV→RGB (0~1) → uint8 HxWx3."""
+    import numpy as np
+
+    h = np.mod(h, 1.0)
+    i = np.floor(h * 6.0).astype(np.int32) % 6
+    f = h * 6.0 - np.floor(h * 6.0)
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+    r = np.empty_like(v)
+    g = np.empty_like(v)
+    b = np.empty_like(v)
+    m0 = i == 0
+    m1 = i == 1
+    m2 = i == 2
+    m3 = i == 3
+    m4 = i == 4
+    m5 = i == 5
+    r[m0], g[m0], b[m0] = v[m0], t[m0], p[m0]
+    r[m1], g[m1], b[m1] = q[m1], v[m1], p[m1]
+    r[m2], g[m2], b[m2] = p[m2], v[m2], t[m2]
+    r[m3], g[m3], b[m3] = p[m3], q[m3], v[m3]
+    r[m4], g[m4], b[m4] = t[m4], p[m4], v[m4]
+    r[m5], g[m5], b[m5] = v[m5], p[m5], q[m5]
+    rgb = np.stack((r, g, b), axis=-1)
+    return (np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+
+def shader_bg(t, scheme):
+    # 패널용 동적 배경 (numpy 벡터화 — Python 이중루프는 프레임당 ~100ms+)
+    try:
+        import numpy as np
+    except ImportError:
+        return _shader_bg_py(t, scheme)
+
+    _name, hue_base, sat, _accent, _line_lo, _line_hi = scheme
+    ys, xs = np.mgrid[0:PX_H, 0:PX_W]
+    nx = xs.astype(np.float64) / PX_W
+    ny = ys.astype(np.float64) / PX_H
+    cell = 10
+    cx = (xs % cell) / float(cell)
+    cy = (ys % cell) / float(cell)
+    diag = np.abs(cx - 0.5) + np.abs(cy - 0.5)
+    grid = (diag < 0.35).astype(np.float64)
+    twopi = math.pi * 2
+    wave1 = 0.5 + 0.5 * np.sin((nx * 6 + ny * 2 + t * 2) * twopi)
+    wave2 = 0.5 + 0.5 * np.sin((nx * -3 + ny * 7 - t * 1.5) * twopi)
+    ring = np.sin(np.hypot(nx - 0.5, ny - 0.5) * 18 - t * 2.5 * math.pi)
+    glow = 0.12 * wave1 * wave2 + 0.06 * np.maximum(0.0, ring) + 0.08 * grid * wave1
+    hh = hue_base + 0.12 * wave2 + 0.05 * math.sin(t * twopi)
+    val = glow * 1.4
+    scan = 0.012 * (0.5 + 0.5 * math.sin(t * twopi * 0.4))
+    val = np.where(ys % 4 == 0, val + scan, val)
+    dx, dy = nx - 0.5, ny - 0.5
+    vig = 1.0 - np.clip((dx * dx + dy * dy) * 1.2, 0.0, 0.5)
+    val = np.clip(val * vig, 0.0, 1.0)
+    rgb = _hsv_np(hh, sat, val)
+    rgb[val < 0.02] = 0
+    return Image.fromarray(rgb, mode="RGB")
+
+
+def _shader_bg_py(t, scheme):
+    """numpy 없을 때 폴백 (느림)."""
+    _name, hue_base, sat, _accent, _line_lo, _line_hi = scheme
     img = Image.new("RGB", (PX_W, PX_H), (0, 0, 0))
     pix = img.load()
     for y in range(PX_H):
         for x in range(PX_W):
-            nx, ny = x / PX_W, y / PX_H  # 정규화 좌표
-            cell = 10  # 배경 그리드 기본 셀 크기
+            nx, ny = x / PX_W, y / PX_H
+            cell = 10
             cx = (x % cell) / cell
             cy = (y % cell) / cell
-            diag = abs(cx - 0.5) + abs(cy - 0.5)  # 중심과 거리
+            diag = abs(cx - 0.5) + abs(cy - 0.5)
             grid = 1.0 if diag < 0.35 else 0.0
             wave1 = 0.5 + 0.5 * math.sin((nx * 6 + ny * 2 + t * 2) * math.pi * 2)
             wave2 = 0.5 + 0.5 * math.sin((nx * -3 + ny * 7 - t * 1.5) * math.pi * 2)
             ring = math.sin(math.hypot(nx - 0.5, ny - 0.5) * 18 - t * 2.5 * math.pi)
             glow = 0.12 * wave1 * wave2 + 0.06 * max(0, ring) + 0.08 * grid * wave1
-            hh = 0.58 + 0.12 * wave2 + 0.05 * math.sin(t * math.pi * 2)
+            hh = hue_base + 0.12 * wave2 + 0.05 * math.sin(t * math.pi * 2)
             val = glow * 1.4
             if y % 4 == 0:
                 val += 0.012 * (0.5 + 0.5 * math.sin(t * math.pi * 2 * 0.4))
             dx, dy = nx - 0.5, ny - 0.5
-            vig = 1 - clamp((dx * dx + dy * dy) * 1.2, 0, 0.5)  # 비네팅(코너 어둡게)
+            vig = 1 - clamp((dx * dx + dy * dy) * 1.2, 0, 0.5)
             val *= vig
-            pix[x, y] = (0, 0, 0) if val < 0.02 else hsv(hh % 1.0, 0.7, clamp(val))
+            pix[x, y] = (0, 0, 0) if val < 0.02 else hsv(hh % 1.0, sat, clamp(val))
     return img
 
-def draw_panel_without_text(base_img, t, light, dark, frame_i):
+
+# light/dark별 패널 음영 캐시 (매 프레임 재계산 방지)
+_SHADED_PANEL_CACHE = {}
+
+
+def _get_shaded_panel(light, dark):
+    key = (light, dark)
+    cached = _SHADED_PANEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        import numpy as np
+
+        im = np.array(INNER_M, dtype=np.uint8)
+        ny = np.linspace(0.0, 1.0, PH, dtype=np.float64)[:, None]
+        t = ny * 0.7
+        col = np.empty((PH, PW, 4), dtype=np.uint8)
+        for i in range(3):
+            col[:, :, i] = (light[i] + (dark[i] - light[i]) * t).astype(np.uint8)
+        col[:, :, 3] = 235
+        col[im == 0] = 0
+        shaded = Image.fromarray(col, mode="RGBA")
+    except ImportError:
+        im = INNER_M.load()
+        shaded = Image.new("RGBA", (PW, PH), (0, 0, 0, 0))
+        sp = shaded.load()
+        for ly in range(PH):
+            ny = ly / max(1, PH - 1)
+            col = mix(light, dark, ny * 0.7)
+            for lx in range(PW):
+                if im[lx, ly] > 0:
+                    sp[lx, ly] = (*col, 235)
+    _SHADED_PANEL_CACHE[key] = shaded
+    return shaded
+
+
+def draw_panel_without_text(base_img, t, light, dark, frame_i, scheme):
     # 텍스트 없이 순수 배경/크롬/테두리만 합성해서 반환
     layer = Image.new("RGBA", (PX_W, PX_H), (0, 0, 0, 0))
-    sh = Image.new("RGBA", (PW, PH), (0, 0, 0, 70))  # 그림자(투명)
+    sh = Image.new("RGBA", (PW, PH), (0, 0, 0, 70))
     sh.putalpha(OUTER_M)
-    layer.paste(sh, (PX0 + 2, PY0 + 3), sh)  # 그림자 위치
-    im = INNER_M.load()
-    shaded = Image.new("RGBA", (PW, PH), (0, 0, 0, 0))  # 패널 컬러 음영
-    sp = shaded.load()
-    for ly in range(PH):
-        ny = ly / max(1, PH - 1)
-        col = mix(light, dark, ny * 0.7)
-        for lx in range(PW):
-            if im[lx, ly] > 0:
-                sp[lx, ly] = (*col, 235)
-    layer.paste(shaded, (PX0, PY0), shaded)  # 내부 패널 붙이기
+    layer.paste(sh, (PX0 + 2, PY0 + 3), sh)
+    shaded = _get_shaded_panel(light, dark)
+    layer.paste(shaded, (PX0, PY0), shaded)
     panel_local = Image.new("RGBA", (PW, PH), (0, 0, 0, 0))
     draw_rank_chrome(panel_local, frame_i)
     r, g, b, a = panel_local.split()
     a = ImageChops.multiply(a, INNER_M)
     panel_local = Image.merge("RGBA", (r, g, b, a))
-    layer.paste(panel_local, (PX0, PY0), panel_local)  # 크롬/밴드 오버레이
-    border = Image.new("RGBA", (PW, PH), (0, 0, 0, 0))  # 테두리 성공/실패 효과
+    layer.paste(panel_local, (PX0, PY0), panel_local)
+    border = Image.new("RGBA", (PW, PH), (0, 0, 0, 0))
     bp = border.load()
     for lx, ly, ang in border_meta:
-        gcol = gray_at(ang + t)
+        gcol = scheme_gray_at(ang + t, scheme)
         shimmer = 0.85 + 0.15 * math.sin((ang * 4 + t * 2) * math.pi * 2)
         gcol = tuple(int(clamp(c * shimmer, 0, 255)) for c in gcol)
         bp[lx, ly] = (*gcol, 255)
     layer.paste(border, (PX0, PY0), border)
     return Image.alpha_composite(base_img.convert("RGBA"), layer).convert("RGB")
 
-def make_base_frame(i, ball_hist):
+def make_base_frame(i, ball_hist, scheme):
     # ball 애니메이션까지 포함된 패널용 배경 1프레임 생성
     t = i / N  # 0~1 구간 내 현재 프레임
-    img = shader_bg(t)
+    _name, _hue, _sat, accent, line_lo, line_hi = scheme
+    img = shader_bg(t, scheme)
     pix = img.load()
     draw = ImageDraw.Draw(img)
     bar = 8  # 상하단 강조 라인 두께
-    accent = (40, 70, 90)  # 강조 색상
     for y in range(bar):  # 상단/하단 그라데이션
         a = 0.22 * (1 - y / bar)
         for x in range(PX_W):
             pix[x, y] = mix(pix[x, y], accent, a)
             pix[x, PX_H - 1 - y] = mix(pix[x, PX_H - 1 - y], accent, a)
     blink = 0.55 + 0.35 * (0.5 + 0.5 * math.sin(t * math.pi * 2))
-    line = mix((50, 120, 140), (120, 230, 245), blink)
+    line = mix(line_lo, line_hi, blink)
     for x in range(PX_W):  # 상하단 라인 강조
         pix[x, bar] = mix(pix[x, bar], line, 0.5)
         pix[x, PX_H - 1 - bar] = mix(pix[x, PX_H - 1 - bar], line, 0.5)
-    WHITE = (220, 230, 240)  # 모서리 강조 흰색
+    corner = mix((220, 230, 240), line_hi, 0.25)  # 모서리 강조 (계열 틴트)
     m, L = 5, 14  # 모서리 크기 및 선 길이
     for ox, oy, sx, sy in [  # 네 모서리 라인 출력
         (m, m, 1, 1),
@@ -448,8 +571,8 @@ def make_base_frame(i, ball_hist):
         (PX_W - m - 1, PX_H - m - 1, -1, -1),
     ]:
         for j in range(L):
-            pix[ox + j * sx, oy] = WHITE
-            pix[ox, oy + j * sy] = WHITE
+            pix[ox + j * sx, oy] = corner
+            pix[ox, oy + j * sy] = corner
     for x, y, rx, ry, h, light, dark in sorted(ball_hist[i], key=lambda p: p[1]):
         draw_ball(draw, x, y, rx, ry, h, light, dark)  # 볼 여러 개 프레임마다 그림
     return img, t
@@ -479,9 +602,9 @@ def force_palette_rank_colors(img_p):
 def stamp_rank_colors_on_p(img_p, blue_big, white_big, red_big):
     # 랭킹 테마의 파랑/빨강/흰색 마스크를 팔레트 인덱스에 할당 (P모드)
     pix = list(img_p.getdata())
-    bdat = blue_big.getdata()
-    wdat = white_big.getdata()
-    rdat = red_big.getdata()
+    bdat = list(blue_big.getdata())
+    wdat = list(white_big.getdata())
+    rdat = list(red_big.getdata())
     out = []
     for p, b, w, r in zip(pix, bdat, wdat, rdat):
         if b:
@@ -506,124 +629,180 @@ def resolve_panels(color_key):
         raise SystemExit(f"Unknown PANEL_COLOR={color_key!r}. Use one of: {names}, all")
     return matched
 
-def preview_gif(path):
-    """pygame으로 GIF 루프 재생, ESC/창닫기로 종료."""
+def render_live_rgb_frame(frame_i, ball_hist, scheme, light, dark, text_full, mask_full):
+    """GIF/팔레트 없이 픽셀을 직접 찍어 RGB 1프레임 생성 (PX_W x PX_H)."""
+    img, t = make_base_frame(frame_i, ball_hist, scheme)
+    return stamp_rank_text(
+        draw_panel_without_text(img, t, light, dark, frame_i, scheme),
+        text_full,
+        mask_full,
+    )
+
+
+def pil_rgb_to_surf(img_rgb, size):
+    """PIL RGB(PX) → pygame Surface 후 NEAREST 스케일 (HD로 PIL resize 하지 않음)."""
     import pygame
 
-    path = os.fspath(path)
-    frames = []  # 프레임 리스트
-    durations = []  # 각 프레임별 지속 시간 리스트
-    with Image.open(path) as img:
-        w, h = img.size
-        try:
-            while True:
-                rgba = img.convert("RGBA")
-                frames.append(rgba)
-                durations.append(img.info.get("duration", FRAME_MS))
-                img.seek(img.tell() + 1)
-        except EOFError:
-            pass
+    raw = img_rgb.convert("RGB")
+    buf = raw.tobytes()  # frombuffer는 버퍼 수명 필요 → convert()로 즉시 복사
+    s = pygame.image.frombuffer(buf, raw.size, "RGB").convert()
+    if size != raw.size:
+        s = pygame.transform.scale(s, size)
+    return s
+
+
+def preview_live_pixels(
+    ball_hist,
+    light,
+    dark,
+    text_full,
+    mask_full,
+    panel_name,
+    bg_idx=0,
+):
+    """
+    매 프레임 셰이더/패널 픽셀을 실시간으로 찍어 pygame에 표시.
+    C=배경 계열 순환, ESC/창닫기=종료.
+    """
+    import pygame
 
     pygame.init()
     info = pygame.display.Info()
-    scale = min(1.0, info.current_w / w * 0.9, info.current_h / h * 0.9)  # 화면 해상도 비율 조정
-    vw, vh = max(1, int(w * scale)), max(1, int(h * scale))  # 실제 출력할 윈도우 크기
+    # 320x180을 정수배로만 키움 (1920 경로 업스케일 비용 제거)
+    max_sx = max(1, int(info.current_w * 0.9) // PX_W)
+    max_sy = max(1, int(info.current_h * 0.9) // PX_H)
+    pix_scale = max(1, min(max_sx, max_sy, 4))
+    vw, vh = PX_W * pix_scale, PX_H * pix_scale
     screen = pygame.display.set_mode((vw, vh))
-    pygame.display.set_caption(os.path.basename(path))
-
-    surfs = []
-    for fr in frames:
-        s = pygame.image.fromstring(fr.tobytes(), fr.size, fr.mode).convert_alpha()
-        if scale != 1.0:
-            s = pygame.transform.scale(s, (vw, vh))
-        surfs.append(s)
+    scheme = BG_SCHEMES[bg_idx]
+    caption = f"{panel_name} | bg={scheme[0]} | live x{pix_scale}"
+    pygame.display.set_caption(caption)
 
     clock = pygame.time.Clock()
-    idx = 0
+    frame_i = 0
     acc = 0
     running = True
-    print(f"Preview: {path}  (ESC to close)")
+    print(f"Preview (live pixels x{pix_scale}): {caption}  (C: bg scheme, ESC: close)")
+
+    def blit_frame(fi, sch):
+        img = render_live_rgb_frame(fi, ball_hist, sch, light, dark, text_full, mask_full)
+        screen.blit(pil_rgb_to_surf(img, (vw, vh)), (0, 0))
+        pygame.display.flip()
+
+    blit_frame(frame_i, scheme)
+
     while running:
         dt = clock.tick(60)
         acc += dt
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                running = False
-        if acc >= durations[idx]:
-            acc = 0
-            idx = (idx + 1) % len(surfs)
-        screen.fill((0, 0, 0))
-        screen.blit(surfs[idx], (0, 0))
-        pygame.display.flip()
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                elif event.key == pygame.K_c:
+                    bg_idx = (bg_idx + 1) % len(BG_SCHEMES)
+                    scheme = BG_SCHEMES[bg_idx]
+                    caption = f"{panel_name} | bg={scheme[0]} | live x{pix_scale}"
+                    pygame.display.set_caption(caption)
+                    print(f"BG scheme → {scheme[0]} ({bg_idx + 1}/{len(BG_SCHEMES)})")
+                    blit_frame(frame_i, scheme)
+                    acc = 0
+
+        if acc < FRAME_MS:
+            continue
+        acc = 0
+        frame_i = (frame_i + 1) % N
+        blit_frame(frame_i, scheme)
+
     pygame.quit()
+
+
+def render_panel_frames(bases, light, dark, scheme, text_full, mask_full, text_big, mask_big, blue_big, white_big, red_big):
+    """한 패널+배경 계열로 팔레트 GIF 프레임 리스트 생성 (파일 저장용)."""
+    frames_p = []
+    for i, (img, t) in enumerate(bases):
+        framed = stamp_rank_text(
+            draw_panel_without_text(img.copy(), t, light, dark, i, scheme),
+            text_full,
+            mask_full,
+        )
+        big = framed.resize((W, H), Image.Resampling.NEAREST)
+        big.paste(text_big, mask=mask_big)
+        q = big.convert(
+            "P", palette=Image.Palette.ADAPTIVE, colors=192, dither=Image.Dither.NONE
+        )
+        q = force_palette_rank_colors(q)
+        q = stamp_rank_colors_on_p(q, blue_big, white_big, red_big)
+        frames_p.append(q)
+    return frames_p
 
 def main():
     # 아웃풋 디렉토리 생성(바탕화면에 저장됨)
     out_dir = os.path.join(os.path.expanduser("~"), "Desktop", "ui_panel_gifs")
     os.makedirs(out_dir, exist_ok=True)
     panels = resolve_panels(PANEL_COLOR)  # 선택 패널 리스트
-    print(f"Panel {PW}x{PH} | PANEL_COLOR={PANEL_COLOR!r} → {[p[0] for p in panels]}")
-    balls = make_balls()  # 볼 파라미터 만들기
-    ball_hist = [[ball_at(b, i) for b in balls] for i in range(N)]  # 프레임별 볼의 정보 미리 계산
-    bases = [make_base_frame(i, ball_hist) for i in range(N)]  # 프레임마다 배경+볼 애니 준비
+    bg_idx, scheme = resolve_bg_scheme(BG_SCHEME)
+    print(
+        f"Panel {PW}x{PH} | PANEL_COLOR={PANEL_COLOR!r} → {[p[0] for p in panels]}"
+        f" | BG_SCHEME={scheme[0]!r}"
+    )
+    balls = make_balls()
+    ball_hist = [[ball_at(b, i) for b in balls] for i in range(N)]
     print("Building digit layers...")
-    text_rgb, mask, blue_m, white_m, red_m = build_rank_text_layers(0)  # 랭킹 숫자 마스크 미리 생성
+    text_rgb, mask, blue_m, white_m, red_m = build_rank_text_layers(0)
 
     def to_full(layer):
-        # 320x180 안쪽패널을 전체 패널(PX_W, PX_H) 안에 위치시키기 위함
         full = Image.new(layer.mode, (PX_W, PX_H), 0 if layer.mode == "L" else (0, 0, 0))
         full.paste(layer, (PX0, PY0))
         return full
 
     text_full = to_full(text_rgb)
     mask_full = to_full(mask)
-    blue_full = to_full(blue_m)
-    white_full = to_full(white_m)
-    red_full = to_full(red_m)
 
-    text_big = text_full.resize((W, H), Image.Resampling.NEAREST)  # 최종 해상도용 렌더
-    mask_big = mask_full.resize((W, H), Image.Resampling.NEAREST)
-    blue_big = blue_full.resize((W, H), Image.Resampling.NEAREST)
-    white_big = white_full.resize((W, H), Image.Resampling.NEAREST)
-    red_big = red_full.resize((W, H), Image.Resampling.NEAREST)
-
-    saved = []  # 만들어진 GIF 경로 저장
-    for name, light, dark in panels:  # 패널/투명도별로 반복
-        print(f"Rendering {name}...")
-        frames_p = []
-        for i, (img, t) in enumerate(bases):
-            framed = stamp_rank_text(
-                draw_panel_without_text(img.copy(), t, light, dark, i),
-                text_full,
-                mask_full,
+    if SAVE_GIF:
+        blue_full = to_full(blue_m)
+        white_full = to_full(white_m)
+        red_full = to_full(red_m)
+        text_big = text_full.resize((W, H), Image.Resampling.NEAREST)
+        mask_big = mask_full.resize((W, H), Image.Resampling.NEAREST)
+        blue_big = blue_full.resize((W, H), Image.Resampling.NEAREST)
+        white_big = white_full.resize((W, H), Image.Resampling.NEAREST)
+        red_big = red_full.resize((W, H), Image.Resampling.NEAREST)
+        print("Pre-rendering GIF bases...")
+        bases = [make_base_frame(i, ball_hist, scheme) for i in range(N)]
+        for name, light, dark in panels:
+            print(f"Rendering {name}...")
+            frames_p = render_panel_frames(
+                bases, light, dark, scheme,
+                text_full, mask_full, text_big, mask_big, blue_big, white_big, red_big,
             )
-            big = framed.resize((W, H), Image.Resampling.NEAREST)  # 최종 스케일업
-            big.paste(text_big, mask=mask_big)  # 랭킹 숫자 업스케일 후 직접 스탬프
-            q = big.convert(
-                "P", palette=Image.Palette.ADAPTIVE, colors=192, dither=Image.Dither.NONE
-            )  # 팔레트 모드 변환(최대 192색)
-            q = force_palette_rank_colors(q)  # 랭킹색 팔레트 강제
-            q = stamp_rank_colors_on_p(q, blue_big, white_big, red_big)  # 랭킹색 영역 팔레트 인덱스 강제
-            frames_p.append(q)
-        path = os.path.join(out_dir, f"game_ui_panel_{name}.gif")
-        frames_p[0].save(
-            path,
-            save_all=True,
-            append_images=frames_p[1:],
-            duration=FRAME_MS,
-            loop=0,
-            optimize=False,
-            disposal=2,
-        )
-        print(f"  saved {path}")
-        saved.append(path)
-    print("done")
+            path = os.path.join(out_dir, f"game_ui_panel_{name}.gif")
+            frames_p[0].save(
+                path,
+                save_all=True,
+                append_images=frames_p[1:],
+                duration=FRAME_MS,
+                loop=0,
+                optimize=False,
+                disposal=2,
+            )
+            print(f"  saved {path}")
+        print("done")
+    else:
+        print("SAVE_GIF=False → skip GIF export")
 
-    if PREVIEW and saved:
-        # 한 색만 지정했을 때 그 화면을 바로 보여줌 (all이면 첫 번째)
-        preview_gif(saved[0])
+    if PREVIEW and panels:
+        name, light, dark = panels[0][0], panels[0][1], panels[0][2]
+        preview_live_pixels(
+            ball_hist,
+            light,
+            dark,
+            text_full,
+            mask_full,
+            panel_name=name,
+            bg_idx=bg_idx,
+        )
 
 if __name__ == "__main__":
     main()  # main()만 실행 (직접 실행시)
