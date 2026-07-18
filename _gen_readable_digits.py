@@ -33,6 +33,7 @@ PANELS = [  # 여러 가지 패널 색상 테마 정의 (이름, 밝은색, 어�
 PANEL_COLOR = "green"  # 실행 시 기본 값: cyan
 PREVIEW = True  # True면 픽셀을 실시간으로 찍어 pygame 미리보기
 SAVE_GIF = False  # True면 디스크에 GIF 저장 (느림). 미리보기만 볼 때는 False 권장
+SCHEME_TRANSITION_MS = 700  # C 키 스킴 전환 보간 시간
 # 배경 색 계열 10종: (이름, hue, sat, accent, line_lo, line_hi)
 # 미리보기에서 C 키로 순환
 BG_SCHEMES = [
@@ -188,6 +189,33 @@ def mix(c1, c2, t):
     t = clamp(t)
     return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
 
+def ease_smooth(u):
+    """smoothstep 0→1."""
+    u = clamp(u)
+    return u * u * (3.0 - 2.0 * u)
+
+def lerp(a, b, t):
+    return a + (b - a) * clamp(t)
+
+def lerp_hue(h0, h1, t):
+    """색상환에서 짧은 호로 hue 보간 (0~1)."""
+    d = (h1 - h0) % 1.0
+    if d > 0.5:
+        d -= 1.0
+    return (h0 + d * clamp(t)) % 1.0
+
+def lerp_scheme(a, b, t):
+    """BG_SCHEMES 튜플 보간 → 전환용 임시 scheme."""
+    t = clamp(t)
+    return (
+        f"{a[0]}→{b[0]}",
+        lerp_hue(a[1], b[1], t),
+        lerp(a[2], b[2], t),
+        mix(a[3], b[3], t),
+        mix(a[4], b[4], t),
+        mix(a[5], b[5], t),
+    )
+
 def hsv(h, s, v):
     # HSV 색상값을 RGB 튜플로 변환
     h = h % 1.0
@@ -312,6 +340,17 @@ def build_rank_text_layers(_frame_i=0):
     rgb.paste(Image.new("RGB", (PW, PH), COLOR_RED), mask=red_m)
     return rgb, mask, blue_m, white_m, red_m
 
+def rank_sel_pingpong(frame_i):
+    """
+    루프마다 선택 행이 0→15→0 으로 왕복 (삼각형 파).
+    u=0 과 u→1 모두 sel=0 이라 루프 이음매에서 점프하지 않음.
+    """
+    u = (frame_i % N) / N
+    tri = 1.0 - abs(2.0 * u - 1.0)  # 0→1→0
+    sel = int(tri * (RANK_COUNT - 1) + 1e-9)
+    return max(0, min(RANK_COUNT - 1, sel))
+
+
 def draw_rank_chrome(panel_img, frame_i):
     # 패널에 숫자 부분 뒤 어두운 밴드+랜더링 시 선택 표시+구분선 등 그리기
     draw = ImageDraw.Draw(panel_img)
@@ -325,8 +364,8 @@ def draw_rank_chrome(panel_img, frame_i):
     # 숫자 열 뒤 어두운 밴드(명암 차 증가용)
     draw.rectangle([left, top, line_x0 - 1, bottom], fill=(0, 0, 0, 160))
 
-    # 각 행별로 선택 영역(애니메이션) 표시
-    sel = int(frame_i * RANK_COUNT / N) % RANK_COUNT  # 현재 선택 행
+    # 선택 행: 1→16→1 핑퐁 (루프 끝에서 16→1 점프 없음)
+    sel = rank_sel_pingpong(frame_i)
     y0 = int(top + sel * row_h)
     y1 = int(top + (sel + 1) * row_h)
     draw.rectangle([left, y0, right, max(y0 + 1, y1 - 1)], fill=(0, 0, 0, 255))
@@ -440,14 +479,15 @@ def shader_bg(t, scheme):
     cy = (ys % cell) / float(cell)
     diag = np.abs(cx - 0.5) + np.abs(cy - 0.5)
     grid = (diag < 0.35).astype(np.float64)
+    # t∈[0,1) 루프에서 sin 주기를 정수 회로 맞춤 → 이음매 끊김 방지
     twopi = math.pi * 2
-    wave1 = 0.5 + 0.5 * np.sin((nx * 6 + ny * 2 + t * 2) * twopi)
-    wave2 = 0.5 + 0.5 * np.sin((nx * -3 + ny * 7 - t * 1.5) * twopi)
-    ring = np.sin(np.hypot(nx - 0.5, ny - 0.5) * 18 - t * 2.5 * math.pi)
+    wave1 = 0.5 + 0.5 * np.sin((nx * 6 + ny * 2 + t * 2) * twopi)   # 2 cycles
+    wave2 = 0.5 + 0.5 * np.sin((nx * -3 + ny * 7 - t * 2) * twopi)  # 2 cycles (was 1.5)
+    ring = np.sin(np.hypot(nx - 0.5, ny - 0.5) * 18 - t * 2 * twopi)  # 2 cycles (was 1.25)
     glow = 0.12 * wave1 * wave2 + 0.06 * np.maximum(0.0, ring) + 0.08 * grid * wave1
-    hh = hue_base + 0.12 * wave2 + 0.05 * math.sin(t * twopi)
+    hh = hue_base + 0.12 * wave2 + 0.05 * math.sin(t * twopi)  # 1 cycle
     val = glow * 1.4
-    scan = 0.012 * (0.5 + 0.5 * math.sin(t * twopi * 0.4))
+    scan = 0.012 * (0.5 + 0.5 * math.sin(t * twopi))  # 1 cycle (was 0.4)
     val = np.where(ys % 4 == 0, val + scan, val)
     dx, dy = nx - 0.5, ny - 0.5
     vig = 1.0 - np.clip((dx * dx + dy * dy) * 1.2, 0.0, 0.5)
@@ -470,14 +510,15 @@ def _shader_bg_py(t, scheme):
             cy = (y % cell) / cell
             diag = abs(cx - 0.5) + abs(cy - 0.5)
             grid = 1.0 if diag < 0.35 else 0.0
-            wave1 = 0.5 + 0.5 * math.sin((nx * 6 + ny * 2 + t * 2) * math.pi * 2)
-            wave2 = 0.5 + 0.5 * math.sin((nx * -3 + ny * 7 - t * 1.5) * math.pi * 2)
-            ring = math.sin(math.hypot(nx - 0.5, ny - 0.5) * 18 - t * 2.5 * math.pi)
+            twopi = math.pi * 2
+            wave1 = 0.5 + 0.5 * math.sin((nx * 6 + ny * 2 + t * 2) * twopi)
+            wave2 = 0.5 + 0.5 * math.sin((nx * -3 + ny * 7 - t * 2) * twopi)
+            ring = math.sin(math.hypot(nx - 0.5, ny - 0.5) * 18 - t * 2 * twopi)
             glow = 0.12 * wave1 * wave2 + 0.06 * max(0, ring) + 0.08 * grid * wave1
-            hh = hue_base + 0.12 * wave2 + 0.05 * math.sin(t * math.pi * 2)
+            hh = hue_base + 0.12 * wave2 + 0.05 * math.sin(t * twopi)
             val = glow * 1.4
             if y % 4 == 0:
-                val += 0.012 * (0.5 + 0.5 * math.sin(t * math.pi * 2 * 0.4))
+                val += 0.012 * (0.5 + 0.5 * math.sin(t * twopi))
             dx, dy = nx - 0.5, ny - 0.5
             vig = 1 - clamp((dx * dx + dy * dy) * 1.2, 0, 0.5)
             val *= vig
@@ -662,7 +703,7 @@ def preview_live_pixels(
 ):
     """
     매 프레임 셰이더/패널 픽셀을 실시간으로 찍어 pygame에 표시.
-    C=배경 계열 순환, ESC/창닫기=종료.
+    C=배경 계열 순환(색 보간 전환), ESC/창닫기=종료.
     """
     import pygame
 
@@ -682,18 +723,44 @@ def preview_live_pixels(
     frame_i = 0
     acc = 0
     running = True
-    print(f"Preview (live pixels x{pix_scale}): {caption}  (C: bg scheme, ESC: close)")
+
+    morphing = False
+    morph_t = 0.0
+    from_sch = None
+    to_sch = None
+    pending_idx = None
+
+    print(f"Preview (live pixels x{pix_scale}): {caption}  (C: bg scheme morph, ESC: close)")
 
     def blit_frame(fi, sch):
         img = render_live_rgb_frame(fi, ball_hist, sch, light, dark, text_full, mask_full)
         screen.blit(pil_rgb_to_surf(img, (vw, vh)), (0, 0))
         pygame.display.flip()
 
+    def current_draw_scheme():
+        if morphing and from_sch is not None and to_sch is not None:
+            return lerp_scheme(from_sch, to_sch, ease_smooth(morph_t))
+        return scheme
+
     blit_frame(frame_i, scheme)
 
     while running:
         dt = clock.tick(60)
         acc += dt
+
+        if morphing:
+            morph_t += dt / max(1, SCHEME_TRANSITION_MS)
+            if morph_t >= 1.0:
+                morphing = False
+                morph_t = 1.0
+                bg_idx = pending_idx
+                scheme = BG_SCHEMES[bg_idx]
+                from_sch = None
+                to_sch = None
+                pending_idx = None
+                caption = f"{panel_name} | bg={scheme[0]} | live x{pix_scale}"
+                pygame.display.set_caption(caption)
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -701,19 +768,28 @@ def preview_live_pixels(
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_c:
-                    bg_idx = (bg_idx + 1) % len(BG_SCHEMES)
-                    scheme = BG_SCHEMES[bg_idx]
-                    caption = f"{panel_name} | bg={scheme[0]} | live x{pix_scale}"
+                    # 전환 중이면 현재 보간 색에서 이어서 다음 스킴으로
+                    if morphing and from_sch is not None and to_sch is not None:
+                        from_sch = lerp_scheme(from_sch, to_sch, ease_smooth(morph_t))
+                        start_idx = pending_idx
+                    else:
+                        from_sch = scheme
+                        start_idx = bg_idx
+                    pending_idx = (start_idx + 1) % len(BG_SCHEMES)
+                    to_sch = BG_SCHEMES[pending_idx]
+                    morphing = True
+                    morph_t = 0.0
+                    caption = f"{panel_name} | bg→{to_sch[0]} | live x{pix_scale}"
                     pygame.display.set_caption(caption)
-                    print(f"BG scheme → {scheme[0]} ({bg_idx + 1}/{len(BG_SCHEMES)})")
-                    blit_frame(frame_i, scheme)
-                    acc = 0
+                    print(f"BG scheme → {to_sch[0]} ({pending_idx + 1}/{len(BG_SCHEMES)})")
+                    blit_frame(frame_i, current_draw_scheme())
 
         if acc < FRAME_MS:
+            # 전환 중에도 색만 갱신하려면 프레임 틱에서 그림
             continue
         acc = 0
         frame_i = (frame_i + 1) % N
-        blit_frame(frame_i, scheme)
+        blit_frame(frame_i, current_draw_scheme())
 
     pygame.quit()
 
